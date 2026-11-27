@@ -42,7 +42,7 @@ export async function rememberDeferredTurns(env: Env, signal: AbortSignal): Prom
       const { modelFor } = await createAgentModels(env, { userId: ownerId, threadId: last.thread_id, turnId: `${last.turn_id}:memory-batch`, requestId: `${last.request_id}:memory-batch` });
       const ownerMessage = messages.length === 1 ? messages[0] : `The owner's messages from several recent turns, oldest first:\n${messages.map((text, index) => `${index + 1}. ${text.slice(0, MAX_MESSAGE_CHARS)}`).join("\n")}`;
       await rememberFromTurn(env.DB, modelFor(env.ME3_AGENT_FAST_MODEL?.trim() || "anthropic/claude-haiku-5.5", { purpose: "memory_extraction" }),
-        { ownerId, turnId: last.turn_id, ownerMessage, replyText: "", ownerSnapshot: snapshot.prompt }, AbortSignal.any([signal, AbortSignal.timeout(20_000)]));
+        { ownerId, turnId: last.turn_id, ownerMessage, ownerSnapshot: snapshot.prompt }, AbortSignal.any([signal, AbortSignal.timeout(20_000)]));
     } catch (error) {
       console.error("Deferred memory extraction failed", error);
     }

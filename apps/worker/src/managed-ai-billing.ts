@@ -11,7 +11,9 @@ const MANAGED_MODELS = [
   "openai/gpt-5.4-mini",
   "openai/gpt-5.4-nano",
   "zai-org/glm-4.7-flash",
-  "moonshotai/kimi-k3",
+  // Kimi runs on Workers AI. Kimi K3 went to Moonshot's own API, which may train on inputs, and chat can
+  // carry Google Calendar events that Google's Limited Use rules keep away from such providers.
+  "moonshotai/kimi-k2.7-code",
   "anthropic/claude-sonnet-4.6",
   "anthropic/claude-sonnet-5",
   "openai/gpt-5.5",
@@ -36,6 +38,8 @@ const MANAGED_FALLBACK_MODELS = ["anthropic/claude-haiku-5.5", "zai-org/glm-4.7-
 const MANAGED_BILLABLE_TEXT_MODELS = [...new Set<string>([
   ...MANAGED_MODELS,
   ...MANAGED_FALLBACK_MODELS,
+  // Kimi K3 is no longer offered; receipts from before the switch still reconcile.
+  "moonshotai/kimi-k3",
   // Clef routing was removed (me3-ahsk.45); receipts from installs that ran it still reconcile.
   "cloudflare/clef",
   "cloudflare/clef-flash",

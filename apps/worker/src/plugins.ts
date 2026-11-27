@@ -1443,6 +1443,11 @@ const SOUP_PLUGIN: CorePluginManifestSummary = {
     { id: "news.build.api", path: "/api/news/build", methods: ["POST"], auth: "owner" },
     { id: "news.paper.api", path: "/api/news/papers/:id", methods: ["GET"], auth: "owner" },
     { id: "news.paper.act.api", path: "/api/news/papers/:id/act", methods: ["POST"], auth: "owner" },
+    { id: "news.follow.api", path: "/api/news/follow", methods: ["GET"], auth: "owner" },
+    { id: "news.follow.resolve.api", path: "/api/news/follow/resolve", methods: ["POST"], auth: "owner" },
+    { id: "news.follow.youtube.start.api", path: "/api/news/follow/youtube/start", methods: ["POST"], auth: "owner" },
+    { id: "news.follow.youtube.collect.api", path: "/api/news/follow/youtube/collect", methods: ["POST"], auth: "owner" },
+    { id: "news.follow.youtube.callback.api", path: "/api/news-connect/youtube/callback/:app", methods: ["GET"], auth: "public" },
   ],
   uiSlots: [{ id: "soup.home-card", slot: "home.card", label: "News" }],
   agentTools: [

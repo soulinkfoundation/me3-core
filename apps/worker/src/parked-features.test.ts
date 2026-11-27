@@ -1,31 +1,24 @@
 import { describe, expect, it } from "vitest";
-import { isToolAvailable, parkedFeaturesOn } from "./agent-runtime";
+import { isToolAvailable } from "./agent-runtime";
 import { createDomainTools } from "../../../packages/agent/src/tools/index";
 import { buildAgentSystemPrompt } from "../../../packages/agent/src/prompt";
 
-// me3-5u97.6: custom Home cards are parked for the first release. A new owner's agent must not see
-// their tools (so it cannot offer them); social posts hide with their plugin. Agent purchases were
-// parked with them and are offered again (me3-2gdu.17).
-describe("parked features stay out of a new owner's agent", () => {
-  it("is off unless ME3_PARKED_FEATURES is on", () => {
-    expect(parkedFeaturesOn({})).toBe(false);
-    expect(parkedFeaturesOn({ ME3_PARKED_FEATURES: "off" })).toBe(false);
-    expect(parkedFeaturesOn({ ME3_PARKED_FEATURES: " On " })).toBe(true);
-  });
-
-  it("hides card and payment tools when their services are not offered", () => {
+// me3-c5h8: custom Home cards were parked for the first release (me3-5u97.6) and are now offered on every
+// install. Free installs limit which data a card may show (home-card-data.test.ts). Social posts and email
+// campaigns stay out of the agent's offers.
+describe("features the agent may offer", () => {
+  it("offers card tools when their services are there and hides them when not", () => {
     const names = createDomainTools().map((tool) => tool.name);
     const cards = names.filter((name) => name.startsWith("core_cards_"));
-    const payments = names.filter((name) => name.startsWith("core_payments_"));
     expect(cards.length).toBeGreaterThan(0);
-    expect(payments.length).toBeGreaterThan(0);
-    for (const name of [...cards, ...payments]) expect(isToolAvailable(name, {})).toBe(false);
+    for (const name of cards) expect(isToolAvailable(name, {})).toBe(false);
     expect(isToolAvailable("core_sites_starter_draft", {})).toBe(true);
   });
 
-  it("tells the agent never to offer campaigns, social posts or cards, and leaves purchases open", () => {
+  it("never forbids cards, and still never offers campaigns or social posts", () => {
     const prompt = buildAgentSystemPrompt({ ownerName: "Ada", timezone: "UTC" });
-    expect(prompt).toMatch(/never offer or suggest them/);
+    expect(prompt).toMatch(/cannot yet send email campaigns or publish social posts: never offer or suggest them/);
+    expect(prompt).not.toMatch(/custom Home cards/);
     expect(prompt).not.toMatch(/make purchases/);
   });
 });

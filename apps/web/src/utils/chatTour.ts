@@ -1,12 +1,12 @@
 // Show me around (me3-q6la.5): Core writes the steps and keeps the owner's place (GET /api/assistant/tour),
 // so every app tours the same things and a tour started on one picks up on another.
-export type TourPlace = "website";
+export type TourPlace = "website" | "page";
 export type TourTask = { kind: "open"; label: string; to: TourPlace } | { kind: "site_ask"; label: string };
 /** What the card points at, in the order the owner reaches them; elements carry `data-tour-target="<id>"`. */
 export type TourTarget = { id: string; hint: string };
 /** The screen a step is about: Next takes the owner there, and the card explains it once they're on it. */
 export type TourScreen = "home" | "accounts" | "social" | "chat";
-export type TourStep = { id: string; emoji: string; title: string; body: string; screen: TourScreen | null; intro: string | null; targets: TourTarget[]; task: TourTask | null; done: boolean };
+export type TourStep = { id: string; emoji: string; title: string; body: string; screen: TourScreen | null; intro: string | null; targets: TourTarget[]; task: TourTask | null; done: boolean; optional?: boolean };
 export type TourStatus = "new" | "active" | "finished" | "skipped";
 export type ChatTour = { steps: TourStep[]; progress: { status: TourStatus; stepId: string | null } };
 
@@ -16,7 +16,7 @@ type GetJson = <T>(path: string) => Promise<T>;
 export function readChatTour(tour: Partial<ChatTour> | null | undefined): ChatTour | null {
   const steps = (Array.isArray(tour?.steps) ? tour.steps : [])
     .filter(step => step?.title && step.body)
-    .map(step => ({ ...step, screen: step.screen ?? null, intro: step.intro ?? null, targets: Array.isArray(step.targets) ? step.targets.filter(target => target?.id) : [], task: step.task ?? null, done: step.done === true }));
+    .map(step => ({ ...step, screen: step.screen ?? null, intro: step.intro ?? null, targets: Array.isArray(step.targets) ? step.targets.filter(target => target?.id) : [], task: step.task ?? null, done: step.done === true, optional: step.optional === true }));
   if (!steps.length) return null;
   const status = tour?.progress?.status ?? "new";
   return { steps, progress: { status, stepId: tour?.progress?.stepId ?? null } };
@@ -37,6 +37,14 @@ export function tourPlaceForPath(path: string): "accounts" | "social" | null {
   if (path === "/accounts" || path.startsWith("/accounts/")) return "accounts";
   if (path === "/social" || path.startsWith("/social/")) return "social";
   return null;
+}
+
+/**
+ * What the card points at once the step is done: the step's first target (Home's tab) when it's in view, so the card
+ * never docks at the bottom where it would cover Add to Home on a short Home.
+ */
+export function tourPointsWhenDone(targets: TourTarget[], inView: (id: string) => boolean): TourTarget | null {
+  return targets[0] && inView(targets[0].id) ? targets[0] : null;
 }
 
 /** Off Home (Accounts, Social) the profile picture isn't there, so the card points at Back first. */
@@ -69,8 +77,11 @@ export function placeTourCard(target: Box, card: { width: number; height: number
     const top = clamp(centreY - 32, margin, view.height - card.height - margin);
     return { top, left: around.left - card.width - gap, side: "left", arrow: clamp(centreY - top, 20, card.height - 20) };
   }
+  // A target in the lower half (Add to Home at the end of Home) gets the card above it, clear of the composer.
+  const roomAbove = !around && avoid.top - gap - card.height >= margin;
+  if (roomAbove && centreY > view.height / 2) return horizontal(avoid.top - gap - card.height, "above");
   if (avoid.bottom + gap + card.height <= view.height - margin) return horizontal(avoid.bottom + gap, "below");
-  if (!around && avoid.top - gap - card.height >= margin) return horizontal(avoid.top - gap - card.height, "above");
+  if (roomAbove) return horizontal(avoid.top - gap - card.height, "above");
   return null;
 }
 
@@ -91,13 +102,27 @@ export function currentTourScreen(path: string, view: unknown): TourScreen | nul
 }
 
 /**
- * Where Next or Back takes the owner, if anywhere: a step with nothing to point at opens its screen, and leaving
- * Accounts or Social for a step on another screen closes them too, so Back doesn't leave them open.
+ * Where Next or Back takes the owner: the step's own screen, so the card always explains what's in front of them
+ * (Next from Home's card on Chat opens Home). Leaving Accounts or Social closes them too.
  */
 export function tourScreenToOpen(step: TourStep, current: TourScreen | null): TourScreen | null {
   const screen = step.screen;
-  if (!screen || screen === current) return null;
-  return !step.targets.length || current === "accounts" || current === "social" ? screen : null;
+  return !screen || screen === current ? null : screen;
+}
+
+/**
+ * Whether the step counts as done here. Landing on Accounts or Social is the step; a step that points the way
+ * (Home, then Add to Home) shows Done only on its own screen, so an owner whose Home already has cards still starts
+ * by opening Home.
+ */
+export function tourStepDone(step: TourStep, current: TourScreen | null): boolean {
+  if ((step.id === "accounts" || step.id === "social") && step.id === current) return true;
+  return step.done && (!step.targets.length || onScreen(step.screen, current));
+}
+
+/** The page where the owner does a step (Calendar's connect dialog): the card steps aside there. */
+export function tourStepIsHere(step: TourStep, path: string): boolean {
+  return step.id === "calendar" && (path === "/calendar" || path.startsWith("/calendar/"));
 }
 
 /** Where the tour just sent the owner and when; `arrived` is when that screen came up. */
@@ -120,9 +145,12 @@ export function tourCardWaits(step: TourStep, current: TourScreen | null, dialog
 }
 const onScreen = (screen: TourScreen | null, current: TourScreen | null) => !screen || screen === current;
 
-/** The step last seen settled (on its screen, nothing open) and whether it was done then. */
+/** The step last seen settled (on its screen, nothing open) and whether Core counted it done then. */
 export type TourTickMemory = { stepId: string; done: boolean };
-/** Done what Home asked (a card added, Inbox picked) and back with nothing open: straight on to the next step. */
+/**
+ * Done what Home asked (Inbox picked, a calendar connected) and back with nothing open: straight on to the next step.
+ * `done` is Core's tick, so arriving on a step that was already done doesn't skip it.
+ */
 export function tourMovesOn(memory: TourTickMemory | null, now: { stepId: string; done: boolean; hasTargets: boolean; settled: boolean }): { memory: TourTickMemory | null; advance: boolean } {
   if (memory?.stepId === now.stepId && !memory.done && now.done && now.hasTargets && now.settled) return { memory: { stepId: now.stepId, done: true }, advance: true };
   if (memory?.stepId !== now.stepId || now.settled) return { memory: { stepId: now.stepId, done: now.done }, advance: false };

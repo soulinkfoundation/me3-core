@@ -129,7 +129,7 @@ function searchResponse() {
     { profileId: "cloud-profile-brian", name: "Brian", handle: "brian", kind: "person", profileUrl: "https://brian.example/", publicUrl: "https://brian.example/",
       offerings: [indexedOffering({ id: "service:coaching-b", url: "https://brian.example/book", agentCheckout: null })], reasons: ["Offers Coaching session"], indexedAt: "2026-10-17T10:00:00Z",
       seller: { soulinkLinked: false, listedSince: "2026-10-01T00:00:00Z", completedNetworkSales: 0, reportStatus: "none", newSeller: true, agentCheckout: false } },
-    { profileId: SELLER_PROFILE_ID, name: "Aoife", handle: "aoife", kind: "person", profileUrl: `${SELLER_ORIGIN}/`, publicUrl: `${SELLER_ORIGIN}/`,
+    { profileId: SELLER_PROFILE_ID, name: "Aoife", handle: "aoife", kind: "person", profileUrl: `${SELLER_ORIGIN}/me.json`, publicUrl: `${SELLER_ORIGIN}/`,
       offerings: [indexedOffering(), indexedOffering({ type: "product", id: "product:clarity-kit", title: "Clarity Kit", url: `${SELLER_ORIGIN}/shop/clarity-kit`, kind: "product", durationMinutes: null, price: { amount: "49.00", currency: "EUR" } })],
       reasons: ["Offers Coaching session"], indexedAt: "2026-10-17T10:00:00Z",
       seller: { soulinkLinked: true, listedSince: "2026-06-01T00:00:00Z", completedNetworkSales: 12, reportStatus: "none", newSeller: false, agentCheckout: true } },
@@ -137,7 +137,7 @@ function searchResponse() {
 }
 
 type Journey = ReturnType<typeof journey>;
-function journey() {
+function journey(options: { search?: () => ReturnType<typeof searchResponse> } = {}) {
   const sellerSide = seller();
   const buyerSide = buyer();
   const requests: Array<{ method: string; url: string }> = [];
@@ -147,7 +147,7 @@ function journey() {
     const url = String(input instanceof Request ? input.url : input);
     const method = init.method || "GET";
     requests.push({ method, url });
-    if (url === "https://api.me3.test/v1/network/search") return Response.json(searchResponse());
+    if (url === "https://api.me3.test/v1/network/search") return Response.json((options.search ?? searchResponse)());
     if (url.startsWith(`${SELLER_ORIGIN}/`)) {
       const headers = new Headers(init.headers);
       headers.set("cf-connecting-ip", "198.51.100.7");
@@ -274,7 +274,10 @@ describe("network commerce journey (two installations)", () => {
     const event = j.buyer.raw.prepare("SELECT * FROM user_calendar_events").get() as Record<string, any>;
     expect(event).toMatchObject({ title: "Coaching session with Aoife", starts_at: slot.start, ends_at: slot.end, timezone: "Europe/London" });
     const message = j.buyer.raw.prepare("SELECT content FROM assistant_messages WHERE thread_id='thread'").get() as { content: string };
-    expect(message.content).toMatch(/^Booked: .+Coaching session with Aoife, €60\.00 paid\. It's in your calendar\.$/);
+    // Title first, then the full date and time in the owner's timezone, then the price.
+    const day = new Intl.DateTimeFormat("en-GB", { timeZone: "Europe/London", weekday: "long", day: "numeric", month: "long" }).format(new Date(slot.start)).replace(",", "");
+    const time = new Intl.DateTimeFormat("en-GB", { timeZone: "Europe/London", hour: "2-digit", minute: "2-digit", hourCycle: "h23" }).format(new Date(slot.start));
+    expect(message.content).toBe(`Booked: Coaching session with Aoife on ${day} at ${time}. €60.00 paid. It's in your calendar.`);
     expect(j.seller.raw.prepare("SELECT status FROM agent_commerce_checkouts").get()).toEqual({ status: "paid" });
 
     // Polling again is a no-op.
@@ -354,6 +357,18 @@ describe("network commerce journey (two installations)", () => {
     expect(retried.data).toMatchObject({ outcome: "expired", handOver: null });
     expect(j.sellerCheckouts()).toHaveLength(1);
     expect(j.requests.filter(request => request.method === "POST" && request.url.endsWith("/checkouts"))).toHaveLength(1);
+  });
+
+  it("links the seller's public page on the approval card, never their me.json (me3-2gdu.20)", async () => {
+    // The offering has no page of its own, so the card falls back to the seller's site.
+    const j = journey({ search: () => {
+      const response = searchResponse();
+      response.results[1].offerings[0] = { ...response.results[1].offerings[0], url: undefined } as never;
+      return response;
+    } });
+    const { slot } = await searchAndCheck(j);
+    const { card } = await proposeAndApprove(j, slot.start);
+    expect(card.merchant).toMatchObject({ name: "Aoife", url: `${SELLER_ORIGIN}/` });
   });
 
   it("falls back to the seller's page when agent checkout is turned off", async () => {
@@ -459,6 +474,18 @@ describe("people search for a day (me3-7obo)", () => {
     expect(sent[0]).not.toHaveProperty("from");
     expect(found.data.results.map((person: { name: string }) => person.name)).toEqual(["Aoife", "Brian"]);
     expect(found.data.results.some((person: Record<string, unknown>) => person.nextFree)).toBe(false);
+  });
+
+  it("an empty dated search does not tell the owner that paid sellers have no time (me3-2gdu.20)", async () => {
+    // Dated searches only see free-call time, so a seller with open paid slots can be missing.
+    const j = journey();
+    vi.stubGlobal("fetch", async () => Response.json({ query: "coaching", results: [] }));
+    const found = await j.run("core_people_search", { query: "strategy session", availableFrom: "2026-11-30", availableTo: "2026-12-06" });
+    expect(found.data.results).toEqual([]);
+    expect(found.data.next).not.toMatch(/If none are free, say so/);
+    expect(found.data.next).toMatch(/free calls? only|only free calls?/i);
+    expect(found.data.next).toMatch(/without availableFrom/);
+    expect(found.data.next).toMatch(/core_payments_network_check/);
   });
 
   it("refuses a day that is not YYYY-MM-DD", async () => {

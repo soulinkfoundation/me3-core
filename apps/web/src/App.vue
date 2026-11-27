@@ -11,6 +11,7 @@ import AppTour from "./components/tour/AppTour.vue";
 import { useMailboxRealtime } from "./composables/useMailboxRealtime";
 import { useAuthStore } from "./stores/auth";
 import { useTourStore } from "./stores/tour";
+import { useMessagingStore } from "./stores/messaging";
 
 /** Set true to show the floating agent chat launcher on supported pages. */
 const AGENT_LAUNCHER_UI_ENABLED = false;
@@ -83,6 +84,14 @@ onBeforeUnmount(() => {
     window.removeEventListener(pluginChangedEvent, handlePluginChanged);
   }
 });
+
+// People's Soulink conversations, for the owner only: Chat's person cards, Messages and the profile badge.
+const messaging = useMessagingStore();
+watch(
+  () => auth.isAuthenticated,
+  (signedIn) => { if (signedIn) void messaging.start(); else void messaging.stop(); },
+  { immediate: true },
+);
 
 watch(
   () => auth.isAuthenticated,

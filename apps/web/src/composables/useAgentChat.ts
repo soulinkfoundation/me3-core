@@ -8,6 +8,7 @@ import type {
   AgentChatAllowanceNotice,
   AgentChatMemoryReview,
 } from "../utils/agentChat";
+import type { AgentMessageDraft } from "../utils/messagingCards";
 
 export type AgentChatMessageAttachment = {
   id?: string | null;
@@ -35,6 +36,8 @@ export type AgentChatMessage = {
   allowanceNotice?: AgentChatAllowanceNotice | null;
   memoryReview?: AgentChatMemoryReview | null;
   emailDraftAction?: AgentChatEmailDraftAction | null;
+  /** A chat message ME3 drafted to someone, sent from this browser through Soulink. */
+  messageDraft?: AgentMessageDraft | null;
   trace?: AgentChatTurnTrace | null;
   inboxLink?: boolean;
   reminderLink?: boolean;

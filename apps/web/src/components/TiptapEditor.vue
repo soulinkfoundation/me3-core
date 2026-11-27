@@ -1828,6 +1828,7 @@ defineExpose({
       </button>
     </div>
 
+    <slot name="before-title" />
     <div v-if="showTitleField" class="editor-title-field">
       <input
         :value="title"

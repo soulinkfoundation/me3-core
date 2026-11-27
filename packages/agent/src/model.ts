@@ -55,6 +55,8 @@ const PRICING: Record<string, {input:number;output:number;cachedInput?:number;ca
   "@cf/zai-org/glm-5.3-flash": {input:0.15,output:0.5,cachedInput:0.03},
   // https://developers.cloudflare.com/workers-ai/models/deepseek-v4-flash-0731/
   "@cf/deepseek-ai/deepseek-v4-flash-0731": {input:0.44,output:1.32,cachedInput:0.014},
+  // https://developers.cloudflare.com/workers-ai/models/kimi-k2.7-code/
+  "@cf/moonshotai/kimi-k2.7-code": {input:0.95,output:4,cachedInput:0.19},
   // https://developers.cloudflare.com/workers-ai/models/deepseek-v4.1-flash-1017/
   "@cf/deepseek-ai/deepseek-v4.1-flash-1017": {input:0.3,output:1.2,cachedInput:0.006},
   // https://developers.cloudflare.com/ai/models/anthropic/claude-fable-5.2/

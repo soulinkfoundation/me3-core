@@ -5,6 +5,7 @@ import { AGENT_LANDING_PAGE_SITE_TEMPLATE_ID } from "@me3-core/plugin-landing-pa
 import { api } from "../api";
 import { useAuthStore } from "../stores/auth";
 import { useSitesStore } from "../stores/sites";
+import { useMessagingStore } from "../stores/messaging";
 import { APP_FEATURE_ICONS } from "../utils/appFeatures";
 import { ensurePluginAccess, invalidatePluginAccess } from "../utils/pluginAccess";
 import { permanentPublicSiteUrl, resolvePublicProfileUrl } from "../utils/publicSiteUrl";
@@ -12,8 +13,12 @@ import { useAppToast } from "../composables/useAppToast";
 import UiIcon from "./UiIcon.vue";
 import { useTheme, type ThemePreference } from "../composables/useTheme";
 
+// On a feature page the menu replaces the header's X, so Home leads the list there.
+defineProps<{ showHome?: boolean }>();
 const auth = useAuthStore();
 const sites = useSitesStore();
+// People's Soulink conversations: Messages sits first in the menu, with what waits on you, as on the phones.
+const messaging = useMessagingStore();
 const route = useRoute();
 const router = useRouter();
 const { toastFromUnknown } = useAppToast();
@@ -126,6 +131,7 @@ onBeforeUnmount(() => {
   <button ref="trigger" type="button" class="profile-trigger" data-tour-target="profile_menu" aria-label="Open profile menu" aria-haspopup="menu" :aria-expanded="open" aria-controls="app-profile-menu" @click="toggle" @keydown.down.prevent="!open && toggle()">
     <img v-if="photo" :src="photo" alt="" @error="failedPhoto = true" />
     <span v-else aria-hidden="true">{{ name.slice(0, 1).toUpperCase() }}</span>
+    <span v-if="messaging.waiting > 0" class="profile-trigger__badge" :aria-label="`${messaging.waiting} waiting`">{{ messaging.waiting > 99 ? "99+" : messaging.waiting }}</span>
   </button>
   <Teleport to="body">
     <section v-if="open" id="app-profile-menu" ref="menu" class="profile-menu" role="menu" aria-label="Your profile and navigation" @keydown="keys">
@@ -137,7 +143,9 @@ onBeforeUnmount(() => {
         <a :href="publicUrl" role="menuitem" tabindex="-1" target="_blank" rel="noopener noreferrer"><span>{{ publicUrl.replace(/^https?:\/\//, '').replace(/\/$/, '') }}</span><UiIcon name="ArrowUpRight" :size="14" /></a>
       </header>
       <nav aria-label="Go to">
+        <RouterLink v-if="showHome" to="/assistant" class="profile-menu__row" role="menuitem" tabindex="-1" aria-label="Home" data-testid="menu-home" @click="close()"><span class="profile-menu__emoji" aria-hidden="true">🏠</span><span>Home</span></RouterLink>
         <RouterLink :to="editSite" class="profile-menu__row" role="menuitem" tabindex="-1" aria-label="Edit website" @click="close()"><span class="profile-menu__emoji" aria-hidden="true">🌐</span><span>Edit website</span></RouterLink>
+        <RouterLink v-if="messaging.status !== 'unavailable'" to="/conversations" class="profile-menu__row" role="menuitem" tabindex="-1" aria-label="Messages" :aria-current="route.path === '/conversations' ? 'page' : undefined" data-testid="menu-messages" @click="close()"><span class="profile-menu__emoji" aria-hidden="true">💬</span><span>Messages</span><span v-if="messaging.waiting > 0" class="profile-menu__count">{{ messaging.waiting }}</span></RouterLink>
         <RouterLink v-for="destination in destinations" :key="destination.path" :to="destination.path" class="profile-menu__row" :data-tour-target="destination.path === '/accounts' ? 'menu_accounts' : destination.path === '/social' ? 'menu_social' : undefined" role="menuitem" tabindex="-1" :aria-label="destination.label" :aria-current="route.fullPath === destination.path ? 'page' : undefined" @click="close()"><span class="profile-menu__emoji" aria-hidden="true">{{ destination.emoji }}</span><span>{{ destination.label }}</span></RouterLink>
       </nav>
       <div class="profile-menu__settings">
@@ -168,6 +176,9 @@ onBeforeUnmount(() => {
 .profile-menu h2 { margin: 0; padding: 2px 12px 6px; font-size: 12px; font-weight: 500; color: var(--ui-text-muted); }
 .profile-menu__row { display: flex; align-items: center; gap: 12px; width: 100%; min-height: 44px; padding: 8px 12px; box-sizing: border-box; border: 0; border-radius: 12px; color: var(--ui-text); background: transparent; font: 500 15px var(--font-sans); text-decoration: none; text-align: left; cursor: pointer; }
 .profile-menu__row:hover, .profile-menu__row[aria-current="page"] { background: var(--ui-surface-muted); }
+.profile-menu__count { display: grid; min-width: 22px; height: 22px; place-items: center; margin-left: auto; border-radius: 999px; padding: 0 6px; background: var(--ui-accent); color: var(--ui-accent-contrast, #fff); font: 700 12px var(--font-sans); }
+.profile-trigger { position: relative; }
+.profile-trigger span.profile-trigger__badge { position: absolute; top: 0; right: 0; display: grid; width: auto; min-width: 18px; height: 18px; place-items: center; border: 2px solid var(--ui-bg, #fff); border-radius: 999px; padding: 0 4px; background: var(--ui-accent); color: var(--ui-accent-contrast, #fff); font: 700 11px var(--font-sans); }
 .profile-menu__emoji { width: 22px; text-align: center; font: 20px/1 'Apple Color Emoji', 'Segoe UI Emoji', 'Noto Color Emoji', sans-serif; }
 .profile-menu__settings { padding-top: 8px; margin-top: 8px; box-shadow: 0 -1px var(--ui-border); }
 .profile-menu__footer { display: flex; align-items: center; gap: 8px; padding: 6px 0 0 4px; }

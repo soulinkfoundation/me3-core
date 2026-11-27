@@ -2,8 +2,7 @@
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, useId, watch } from "vue";
 import { useRoute, useRouter } from "vue-router";
 import Button from "../Button.vue";
-import UiIcon from "../UiIcon.vue";
-import { coverTourCard, currentTourScreen, currentTourTarget, onTourScreen, placeTourCard, tourArrival, tourCardWaits, tourLeftLast, tourMovesOn, tourPlaceForPath, tourScreenRoute, tourScreenToOpen, type TourPlacement, type TourScreen, type TourTarget, type TourTickMemory, type TourTrip } from "../../utils/chatTour";
+import { coverTourCard, currentTourScreen, currentTourTarget, onTourScreen, placeTourCard, tourArrival, tourCardWaits, tourLeftLast, tourMovesOn, tourPlaceForPath, tourScreenRoute, tourScreenToOpen, tourPointsWhenDone, tourStepDone, tourStepIsHere, type TourPlacement, type TourScreen, type TourTarget, type TourTickMemory, type TourTrip } from "../../utils/chatTour";
 import { useTourStore } from "../../stores/tour";
 
 /**
@@ -20,22 +19,25 @@ const step = computed(() => tour.step);
 const screen = computed(() => currentTourScreen(route.path, route.query.view));
 // Landing on Accounts or Social is the step, so it counts at once rather than after Core answers;
 // otherwise the card would jump to Back for a moment while the save is on its way.
-const done = computed(() => Boolean(step.value && (step.value.done || tourPlaceForPath(route.path) === step.value.id)));
+const done = computed(() => Boolean(step.value && tourStepDone(step.value, screen.value)));
 const total = computed(() => tour.tour?.steps.length ?? 0);
 const here = computed(() => Boolean(step.value && onTourScreen(step.value.screen, route.path, route.query.view)));
 // A step explains its screen once the owner is on it; on the way there it says how to get there.
 const text = computed(() => step.value && step.value.intro && !here.value && !done.value ? step.value.intro : step.value?.body ?? "");
-// A step with nothing to point at (Socials, the website) has Next bring the owner to its screen,
-// and a way there if they come back to it from somewhere else.
-const takeThere = computed(() => Boolean(step.value?.screen && !step.value.targets.length && !here.value && !step.value.task));
 const card = ref<HTMLElement | null>(null);
 const target = ref<TourTarget | null>(null);
 const placement = ref<TourPlacement | null>(null);
 // The card steps aside while the screen the tour asked for opens, and while a dialog covers the step's screen.
 const hidden = ref(false);
+// The control in the spotlight: the app dims around it while a card shows.
+const spot = ref<DOMRect | null>(null);
+const spotStyle = computed(() => spot.value
+  ? { top: `${spot.value.top - 6}px`, left: `${spot.value.left - 6}px`, width: `${spot.value.width + 12}px`, height: `${spot.value.height + 12}px` }
+  : { top: "50%", left: "50%", width: "0px", height: "0px" });
 let trip: TourTrip | null = null;
 let reachedLast = false;
 let ticked: TourTickMemory | null = null;
+let scrolledTo: HTMLElement | null = null;
 
 watch([() => route.path, () => tour.open], ([path]) => { const place = tourPlaceForPath(path); if (place) tour.seen(place); }, { immediate: true });
 watch(() => tour.open, open => { if (open) { trip = null; reachedLast = false; ticked = null; } });
@@ -81,7 +83,7 @@ function cover(element: HTMLElement | null) {
 
 function hide(value: boolean) {
   hidden.value = value;
-  if (value) { ring(null); cover(null); placement.value = null; target.value = null; }
+  if (value) { ring(null); cover(null); placement.value = null; target.value = null; spot.value = null; }
 }
 
 function update() {
@@ -90,6 +92,8 @@ function update() {
   const arrival = tourArrival(trip, screen.value, Date.now());
   trip = arrival.trip;
   if (arrival.waiting) { hide(true); return; }
+  // Calendar is where the owner connects one: the card waits until they're back.
+  if (tourStepIsHere(item, route.path)) { hide(true); return; }
   // Walking away from the last card without choosing anything finishes the tour.
   const last = tourLeftLast(reachedLast, { isLast: tour.isLast, screen: item.screen, current: screen.value });
   reachedLast = last.reached;
@@ -101,13 +105,21 @@ function update() {
   if (tourCardWaits(item, screen.value, { open: Boolean(dialog), holdsTarget: Boolean(dialog && visibleElement && dialog.contains(visibleElement)) })) { hide(true); return; }
   hide(false);
   // Done what Home asked (a card added, Inbox picked) and back with nothing open: straight on to the next step.
-  const moves = tourMovesOn(ticked, { stepId: item.id, done: done.value, hasTargets: item.targets.length > 0, settled: here.value && !dialog });
+  const moves = tourMovesOn(ticked, { stepId: item.id, done: item.done, hasTargets: item.targets.length > 0, settled: here.value && !dialog });
   ticked = moves.memory;
   if (moves.advance) { next(); return; }
-  const pointAt = done.value ? null : visible;
+  const pointAt = done.value ? tourPointsWhenDone(item.targets, id => Boolean(targetElement(id))) : visible;
   target.value = pointAt;
   const element = pointAt ? targetElement(pointAt.id) : null;
-  ring(element);
+  // The control to tap scrolls clear of the composer floating over the bottom (Add to Home at the end of a long Home).
+  if (element && element !== scrolledTo) {
+    const box = element.getBoundingClientRect();
+    if (box.top < 72 || box.bottom > window.innerHeight - 110) element.scrollIntoView({ block: "center", behavior: "smooth" });
+    scrolledTo = element;
+  }
+  // It pulses while it's the thing to tap; a done step's card can still sit beside it.
+  ring(done.value ? null : element);
+  spot.value = element ? element.getBoundingClientRect() : null;
   const size = { width: card.value.offsetWidth, height: card.value.offsetHeight };
   const view = { width: window.innerWidth, height: window.innerHeight };
   if (!element) {
@@ -123,10 +135,15 @@ function update() {
   placement.value = placeTourCard(element.getBoundingClientRect(), size, view, menu?.getBoundingClientRect());
 }
 // Menus, Home and dialogs open and close without telling the tour, so it looks again a few times a second.
+// A calendar connected (on Calendar, or through Google) doesn't tell it either, so while a step waits it asks Core every few seconds.
 let timer: ReturnType<typeof setInterval> | undefined;
+let ticks: ReturnType<typeof setInterval> | undefined;
 watch(() => tour.open, open => {
-  clearInterval(timer);
-  if (open) { timer = setInterval(update, 200); void nextTick(update); } else update();
+  clearInterval(timer); clearInterval(ticks);
+  if (open) {
+    timer = setInterval(update, 200); void nextTick(update);
+    ticks = setInterval(() => { if (step.value && !done.value && !document.hidden) void tour.refresh(); }, 5000);
+  } else update();
 }, { immediate: true });
 watch(() => [tour.index, done.value], () => void nextTick(update));
 
@@ -141,7 +158,7 @@ watch(cardKey, key => {
 }, { immediate: true });
 
 onMounted(() => { window.addEventListener("me3:home-layout-changed", homeChanged); window.addEventListener("resize", update); });
-onBeforeUnmount(() => { clearInterval(timer); clearTimeout(fade); ring(null); cover(null); window.removeEventListener("me3:home-layout-changed", homeChanged); window.removeEventListener("resize", update); });
+onBeforeUnmount(() => { clearInterval(timer); clearInterval(ticks); clearTimeout(fade); ring(null); cover(null); window.removeEventListener("me3:home-layout-changed", homeChanged); window.removeEventListener("resize", update); });
 
 const position = computed(() => placement.value ? { top: `${placement.value.top}px`, left: `${placement.value.left}px`, right: "auto", bottom: "auto", transform: "none" } : undefined);
 const arrowStyle = computed(() => !placement.value ? undefined
@@ -168,36 +185,31 @@ function goTo(index: number) {
   if (place) travel(place);
 }
 function next() { if (tour.isLast) tour.end("finished"); else goTo(tour.index + 1); }
-function back() { goTo(tour.index - 1); }
-function openScreen() { if (step.value?.screen) travel(step.value.screen); }
 </script>
 
 <template>
+  <!-- The app dims behind the card, the thing to tap left clear. Drawing only: clicks go through to the app. -->
+  <div v-if="tour.open && step" class="app-tour-scrim" :class="{ 'is-shown': visibleKey === cardKey && !hidden }" :style="spotStyle" aria-hidden="true" />
   <section v-if="tour.open && step" ref="card" class="app-tour" :class="[placement && `app-tour--${placement.side}`, { 'is-hidden': hidden, 'is-shown': visibleKey === cardKey }]" :style="position" role="dialog" aria-modal="false" :aria-labelledby="titleId" :aria-hidden="hidden || undefined" data-testid="app-tour" :data-target="target?.id">
     <span v-if="placement && placement.side !== 'over'" class="app-tour__arrow" :style="arrowStyle" aria-hidden="true" />
     <div class="app-tour__head">
       <span class="app-tour__emoji" aria-hidden="true">{{ step.emoji }}</span>
       <h2 :id="titleId" class="app-tour__title">{{ step.title }}</h2>
-      <span v-if="done" class="app-tour__done" data-testid="tour-done">✓ Done</span>
-      <!-- The last card's way out for an owner who isn't ready to make their website. -->
-      <button v-if="step.task && tour.isLast" type="button" class="app-tour__close" aria-label="Close the tour" @click="tour.end('finished')"><UiIcon name="X" :size="18" /></button>
     </div>
     <p class="app-tour__body" data-testid="tour-body">{{ text }}</p>
     <p v-if="target" class="app-tour__sr" aria-live="polite" data-testid="tour-hint">{{ target.hint }}</p>
-    <div v-if="takeThere" class="app-tour__actions">
-      <Button color="primary" shape="soft" type="button" @click="openScreen">Take me there</Button>
-    </div>
     <div class="app-tour__foot">
       <span class="app-tour__dots" aria-hidden="true"><i v-for="(item, dot) in tour.tour?.steps" :key="item.id" :class="{ 'is-on': dot <= tour.index }" /></span>
-      <span class="app-tour__count">{{ tour.index + 1 }} of {{ total }}</span>
+      <!-- With the last card's own button beside Finish there's no room for the count; the dots still say where. -->
+      <span v-if="!step.task" class="app-tour__count">{{ tour.index + 1 }} of {{ total }}</span>
       <span class="app-tour__spacer" />
       <!-- Skip only on the first card: once they've started, the tour carries on to the end. -->
       <button v-if="tour.index === 0" type="button" class="app-tour__skip" @click="tour.end('skipped')">Skip</button>
       <!-- The website's button (Make my website, Open the editor) takes Back's place: it ends the tour. -->
-      <Button v-if="step.task" :color="done ? 'secondary' : 'primary'" shape="soft" type="button" data-testid="tour-task" @click="doTask">{{ step.task.label }}</Button>
-      <Button v-else-if="tour.index > 0" color="ghost" shape="soft" type="button" @click="back">Back</Button>
-      <!-- One thing to do at a time: Next shows only once the owner has done the step. -->
-      <Button v-if="done" color="primary" shape="soft" type="button" data-testid="tour-next" @click="next">{{ tour.isLast ? "Finish" : "Next" }}</Button>
+      <!-- The tour shows where things are; it never makes the owner do them (owner device test, 26 Nov 2026): Next on
+           every card, Finish on the last, beside the last card's own button if it has one. -->
+      <Button v-if="step.task" color="secondary" shape="soft" type="button" data-testid="tour-task" @click="doTask">{{ step.task.label }}</Button>
+      <Button color="primary" shape="soft" type="button" data-testid="tour-next" @click="next">{{ tour.isLast ? "Finish" : "Next" }}</Button>
     </div>
   </section>
 </template>
@@ -240,6 +252,9 @@ function openScreen() { if (step.value?.screen) travel(step.value.screen); }
 </style>
 
 <style>
+/* The dim layer: a clear hole the size of the spotlight, whose huge shadow dims everything else. */
+.app-tour-scrim { position: fixed; z-index: 59; border-radius: 16px; box-shadow: 0 0 0 200vmax rgb(0 0 0 / 32%); pointer-events: none; opacity: 0; transition: opacity .25s ease-out; }
+.app-tour-scrim.is-shown { opacity: 1; }
 /* The thing to tap next: a ring pulses out from it. */
 .tour-target-ring { animation: tour-target-ring 1.8s ease-out infinite; }
 @keyframes tour-target-ring {

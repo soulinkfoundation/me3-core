@@ -1,12 +1,12 @@
 import { describe, expect, it } from "vitest";
 import { newsPatchFromAgent } from "./agent-soup";
 import { cleanSummary, clockTime, countPaper, layoutPaper, noteAddsSomething, newsBuildDue, newsDueMinutes, newsFromSearch, readPaperPicks, sameEvent, shouldBuildPaper, toNewsCandidates, writeNewsPicks } from "./news-paper";
-import { applyNewsPatch, defaultNewsPrefs, describeNewsSettings, newsIsSetUp } from "./news-settings";
+import { applyNewsPatch, defaultNewsPrefs, describeNewsSettings, goalsFromMission, newsIsSetUp } from "./news-settings";
 import { newsPrefsFromSoup } from "./news-migrate";
 import { NEWS_PUSH_TITLE, newsPushBody, newsPushDue } from "./news-push";
 import { cityFromTimezone, cleanCityName, countryFromTimezone, describeWeather, geocodeCity } from "./news-weather";
 import { SoupUnavailableError, newsTodayQuery, readNewsToday, type SoupClient } from "./soup-client";
-import { emptySoupTaste, snapNewsTime, type SoupTaste } from "./soup-taste";
+import { emptySoupTaste, readNewsPrefs, snapNewsTime, type SoupTaste } from "./soup-taste";
 import { NEWS_FIXTURE_COACH, NEWS_FIXTURE_FOUNDER, newsFixtureFor } from "./testing/news-today.fixture";
 import type { AgentModel } from "../../../packages/agent/src/types";
 
@@ -178,13 +178,16 @@ describe("news picks", () => {
     let seen: Parameters<AgentModel["step"]>[0] | null = null;
     const candidates = toNewsCandidates(NEWS_FIXTURE_FOUNDER, founderTaste());
     const model = { id: "fast", async step(step) { seen = step; return { text: "", toolCalls: [{ id: "1", name: "core_news_layout", arguments: { lead: { id: candidates.front[0].id } } }] }; } } as AgentModel;
-    const picks = await writeNewsPicks(model, { candidates, taste: founderTaste(), ownerSnapshot: "Mission: ship ME3 payments", week: { calendar: ["2026-11-15T10:00 Galway trip"], tasks: ["Stripe Link wallets"] }, date: "2026-11-13", city: "Dublin", lastRating: "sleepy" }, AbortSignal.timeout(1000));
+    const picks = await writeNewsPicks(model, { candidates, taste: founderTaste(), ownerSnapshot: "Mission: ship ME3 payments", week: { calendar: ["2026-11-15T10:00 Galway trip"], tasks: ["Stripe Link wallets"] }, date: "2026-11-13", city: "Dublin", lastRating: "sleepy", base: ["connected", "hopeful"], bigStories: false }, AbortSignal.timeout(1000));
     expect(picks?.lead?.id).toBe(candidates.front[0].id);
     expect(seen!.toolChoice).toBe("core_news_layout");
     const sent = JSON.parse(String(seen!.messages[1].content));
     expect(sent.comingWeek.calendar).toEqual(["2026-11-15T10:00 Galway trip"]);
     expect(sent.yesterday).toMatch(/dull/);
     expect(sent.candidates.media[0]).toMatchObject({ medium: "watch", minutes: 17 });
+    expect(sent.base).toEqual(["connected", "hopeful"]);
+    expect(sent.bigStories).toBe(false);
+    expect(String(seen!.messages[0].content)).toMatch(/first one leads/);
   });
 });
 
@@ -221,6 +224,40 @@ describe("news settings", () => {
     expect(settings.mine.map(chip => chip.label)).toEqual(["Surfing", "Irish history"]);
     // A lower-case topic from a model still reads as a title on its chip.
     expect(describeNewsSettings({ taste: applyNewsPatch(emptySoupTaste(), { work: ["coaching", "Instagram marketing"] }, context), setUp: false, setUpAt: null, projects: [] }).work.map(chip => chip.label)).toEqual(["Coaching", "Instagram marketing"]);
+  });
+
+  it("never makes a project's own name a work topic", () => {
+    const projects = [{ id: "p1", name: "Soulink", description: null }, { id: "p2", name: "ME3", description: null }];
+    const taste = applyNewsPatch(emptySoupTaste(), { work: ["Soulink", "Coaching", { label: "ME3", on: false }, { label: "AI agents", on: false }] }, { ...context, projectNames: new Set(["soulink", "me3"]) });
+    expect(taste.workTopics.map(topic => topic.topic)).toEqual(["coaching"]);
+    expect(taste.news?.moreWork).toEqual(["ai agents"]);
+    // Topics saved before this rule stay hidden from the chips.
+    const old = applyNewsPatch(emptySoupTaste(), { work: ["Soulink", "ME3", "Coaching"] }, context);
+    expect(describeNewsSettings({ taste: old, setUp: true, setUpAt: null, projects }).work.map(chip => chip.label)).toEqual(["Coaching"]);
+  });
+
+  it("keeps the base: one or two feelings in order, hopeful and know by default", () => {
+    expect(readNewsPrefs({})?.base).toEqual(["hopeful", "know"]);
+    expect(readNewsPrefs({ base: ["nonsense"] })?.base).toEqual(["hopeful", "know"]);
+    expect(readNewsPrefs({})?.bigStories).toBe(true);
+    const taste = applyNewsPatch(emptySoupTaste(), { base: ["connected", "hopeful"], bigStories: false }, context);
+    expect(taste.news).toMatchObject({ base: ["connected", "hopeful"], bigStories: false });
+    expect(describeNewsSettings({ taste, setUp: false, setUpAt: null, projects: [] })).toMatchObject({ base: ["connected", "hopeful"], bigStories: false });
+    expect(() => applyNewsPatch(taste, { base: [] }, context)).toThrow(/one or two/);
+    expect(() => applyNewsPatch(taste, { base: ["hopeful", "know", "connected"] }, context)).toThrow(/one or two/);
+    expect(() => applyNewsPatch(taste, { base: ["calm"] }, context)).toThrow(/one or two/);
+    expect(() => applyNewsPatch(taste, { base: ["know", "know"] }, context)).toThrow(/one or two/);
+    expect(() => applyNewsPatch(taste, { bigStories: "yes" }, context)).toThrow(/true or false/);
+    expect(applyNewsPatch(taste, { occupation: "  Product   designer " }, context).news?.occupation).toBe("Product designer");
+    expect(applyNewsPatch(taste, { occupation: "" }, context).news?.occupation).toBeNull();
+    expect(() => applyNewsPatch(taste, { occupation: 4 }, context)).toThrow(/nurse or founder/);
+  });
+
+  it("lists open goals for the setup sheet, or the older main goal", () => {
+    expect(goalsFromMission(JSON.stringify({ goals: [{ title: "Run a half marathon" }, { title: "Done one", status: "completed" }, { title: "  Learn   Irish " }] }))).toEqual(["Run a half marathon", "Learn Irish"]);
+    expect(goalsFromMission(JSON.stringify({ mainGoal: "Ship ME3" }))).toEqual(["Ship ME3"]);
+    expect(goalsFromMission("not json")).toEqual([]);
+    expect(goalsFromMission(null)).toEqual([]);
   });
 
   it("is set up only once confirmed with at least one topic, and snaps the time to a quarter hour", () => {

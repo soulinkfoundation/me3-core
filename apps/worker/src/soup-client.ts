@@ -108,17 +108,28 @@ export type NewsStory = {
   /** Trusted accounts that shared this story on X: how many, and up to three of their handles. */
   sharedBy?: { count: number; handles: string[] };
 };
-export type NewsTodayRequest = { topics: string[]; country?: string | null; city?: string | null; since?: string; exclude?: string[] };
+export type NewsTodayRequest = {
+  topics: string[]; country?: string | null; city?: string | null; since?: string; exclude?: string[];
+  /** How the owner would like to feel, first leading (Soup's `base`). */
+  base?: string[];
+  /** False leaves the ordinary news cycle off the front page. */
+  bigStories?: boolean;
+  /** Ids from Soup's public follow list, never names or links. */
+  follows?: string[];
+};
 export type NewsToday = {
   contractVersion: string | null;
   frontPage: NewsStory[];
   byTopic: Array<{ topic: string; stories: NewsStory[] }>;
   local: NewsStory[];
   media: NewsStory[];
+  /** The newest piece from each voice the owner follows. Empty when none were sent or Soup is older. */
+  followed?: NewsStory[];
   meta: { considered: number; grouped: boolean };
 };
 
-const NEWS_KEYS = new Set(["topics", "country", "city", "since", "exclude"]);
+const NEWS_KEYS = new Set(["topics", "country", "city", "since", "exclude", "base", "bigStories", "follows"]);
+const NEWS_FEELING_WORDS = new Set(["hopeful", "motivated", "know", "connected"]);
 
 /** The only shape ever sent to Soup's news API: topic words, a country, a city name and story IDs already shown. */
 export function newsTodayQuery(request: NewsTodayRequest): URLSearchParams {
@@ -132,6 +143,11 @@ export function newsTodayQuery(request: NewsTodayRequest): URLSearchParams {
   if (request.since && !Number.isNaN(Date.parse(request.since))) params.set("since", new Date(request.since).toISOString());
   const exclude = (request.exclude || []).filter(id => typeof id === "string" && /^[\w:.-]{1,120}$/.test(id)).slice(0, MAX_EXCLUDE);
   if (exclude.length) params.set("exclude", exclude.join(","));
+  const base = [...new Set((request.base || []).filter(word => NEWS_FEELING_WORDS.has(word)))].slice(0, 2);
+  if (base.length) params.set("base", base.join(","));
+  if (request.bigStories === false) params.set("bigStories", "0");
+  const follows = [...new Set((request.follows || []).filter(id => typeof id === "string" && /^[a-z0-9][a-z0-9-]{0,79}$/.test(id)))].slice(0, 30);
+  if (follows.length) params.set("follows", follows.join(","));
   // A plain identifier for the agent, and a mark that this is a scheduled build so no public count moves.
   params.set("agent", SOUP_AGENT_ID);
   params.set("scheduled", "1");
@@ -174,6 +190,7 @@ export function readNewsToday(data: unknown): NewsToday {
     }),
     local: readNewsStories(raw.local),
     media: readNewsStories(raw.media),
+    followed: readNewsStories(raw.followed),
     meta: { considered: typeof meta.considered === "number" ? meta.considered : 0, grouped: meta.grouped === true },
   };
 }
@@ -234,7 +251,64 @@ export type SoupClient = {
   sendSignals(signals: SoupSignal[], signal?: AbortSignal): Promise<void>;
   /** Today's candidate stories. Throws SoupUnavailableError with status 404 where Soup has no news API yet. */
   newsToday(request: NewsTodayRequest, signal?: AbortSignal): Promise<NewsToday>;
+  /** Soup's curated "who to follow" for topic words and feelings. Throws SoupUnavailableError (404) on an older Soup. */
+  follow(request: SoupFollowRequest, signal?: AbortSignal): Promise<SoupFollowSuggestion[]>;
+  /** Finds and checks sources the owner names (names, @handles, links). Throws SoupUnavailableError (404) on an older Soup. */
+  resolveSources(queries: string[], signal?: AbortSignal): Promise<SoupResolvedSource[]>;
 };
+
+/** A source the owner named, as Soup found it. `id` goes in news follows. */
+export type SoupResolvedSource = { query: string; ok: boolean; id?: string; name?: string; medium?: "read" | "listen" | "watch"; feed?: string; image?: string; reason?: string };
+
+export function readResolvedSources(data: unknown): SoupResolvedSource[] {
+  const rows = data && typeof data === "object" && Array.isArray((data as { results?: unknown }).results) ? (data as { results: unknown[] }).results : [];
+  return rows.flatMap(entry => {
+    const row = (entry && typeof entry === "object" ? entry : {}) as Record<string, unknown>;
+    const text = (value: unknown, max = 300) => typeof value === "string" ? value.trim().slice(0, max) : "";
+    if (!text(row.query)) return [];
+    const medium = row.medium === "read" || row.medium === "listen" || row.medium === "watch" ? row.medium : undefined;
+    const id = /^[a-z0-9][a-z0-9-]{0,79}$/.test(text(row.id)) ? text(row.id) : "";
+    const ok = row.ok === true && !!id && !!medium && !!text(row.name);
+    return [{
+      query: text(row.query), ok,
+      ...(ok ? { id, name: text(row.name, 80), medium, feed: text(row.feed, 500) } : { reason: text(row.reason, 200) || "Couldn't find that one." }),
+      ...(ok && /^https:\/\//.test(text(row.image, 500)) ? { image: text(row.image, 500) } : {}),
+    }];
+  });
+}
+
+/** GET /v1/follow: topic words and feelings only, never the person. */
+export type SoupFollowRequest = { topics: string[]; feelings: string[]; country?: string | null; medium?: "read" | "listen" | "watch"; limit?: number };
+export type SoupFollowSuggestion = { id: string; name: string; kind: "person" | "show" | "publication"; medium: "read" | "listen" | "watch"; image: string | null; feed: string; url: string; category: string; note: string; matched: string[] };
+
+export function soupFollowQuery(request: SoupFollowRequest): URLSearchParams {
+  const params = new URLSearchParams();
+  const topics = request.topics.map(cleanSoupTopic).filter((topic): topic is string => !!topic).slice(0, 12);
+  if (topics.length) params.set("topics", topics.join(","));
+  if (request.feelings.length) params.set("feelings", request.feelings.slice(0, 2).join(","));
+  if (request.country && /^[A-Z]{2}$/.test(request.country)) params.set("country", request.country);
+  if (request.medium) params.set("medium", request.medium);
+  params.set("limit", String(Math.min(Math.max(request.limit ?? 24, 1), 30)));
+  return params;
+}
+
+export function readSoupFollow(data: unknown): SoupFollowSuggestion[] {
+  const rows = data && typeof data === "object" && Array.isArray((data as { suggestions?: unknown }).suggestions) ? (data as { suggestions: unknown[] }).suggestions : [];
+  return rows.flatMap(entry => {
+    const row = (entry && typeof entry === "object" ? entry : {}) as Record<string, unknown>;
+    const text = (value: unknown) => typeof value === "string" ? value.trim() : "";
+    const medium = row.medium === "read" || row.medium === "listen" || row.medium === "watch" ? row.medium : null;
+    const kind = row.kind === "person" || row.kind === "show" || row.kind === "publication" ? row.kind : "show";
+    if (!text(row.id) || !text(row.name) || !/^https?:\/\//.test(text(row.feed)) || !medium) return [];
+    return [{
+      id: text(row.id), name: text(row.name), kind, medium,
+      image: /^https:\/\//.test(text(row.image)) ? text(row.image) : null,
+      feed: text(row.feed), url: /^https?:\/\//.test(text(row.url)) ? text(row.url) : text(row.feed),
+      category: text(row.category), note: text(row.note).slice(0, 200),
+      matched: Array.isArray(row.matched) ? row.matched.filter((word): word is string => typeof word === "string") : [],
+    }];
+  });
+}
 
 type FetchLike = (input: string, init?: RequestInit) => Promise<Response>;
 
@@ -289,6 +363,19 @@ export function createSoupClient(options: { origin?: string | null; fetch?: Fetc
         if (!items.length && bowls.every(result => result.status === "rejected")) throw error;
         return { items, fallback: true, contractVersion: null };
       }
+    },
+    async resolveSources(queries, signal) {
+      let response: Response;
+      try { response = await fetchImpl(`${origin}/v1/news/sources/resolve`, { method: "POST", headers: { ...headers, "Content-Type": "application/json" }, body: JSON.stringify({ queries: queries.slice(0, 30) }), signal }); }
+      catch (error) { throw new SoupUnavailableError(`The Human Soup could not be reached: ${error instanceof Error ? error.message : String(error)}`); }
+      if (!response.ok) {
+        const message = await response.json().then((body: unknown) => (body as { error?: string } | null)?.error).catch(() => undefined);
+        throw new SoupUnavailableError(message || `The Human Soup answered ${response.status} for /v1/news/sources/resolve`, response.status);
+      }
+      return readResolvedSources(await response.json());
+    },
+    async follow(request, signal) {
+      return readSoupFollow(await getJson<unknown>(`/v1/follow?${soupFollowQuery(request)}`, signal));
     },
     async newsToday(request, signal) {
       return readNewsToday(await getJson<unknown>(`/v1/news/today?${newsTodayQuery(request)}`, signal));

@@ -1,8 +1,10 @@
 import type { AgentDb, AgentModel, AgentTool } from "../../../packages/agent/src/types";
 
 // Automatic memory: after each finished turn a fast model reads the owner's own words
-// and decides whether anything is worth keeping. It only ever sees what the owner typed
-// and the reply, never emails, pages or tool output, so outside text cannot plant memories.
+// and decides whether anything is worth keeping. It only ever sees what the owner typed,
+// never the assistant's reply, emails, pages or tool output, so neither the assistant's own
+// claims nor outside text can become owner facts (me3-yz6n). Every memory it adds or changes
+// must quote the owner's words it rests on, and the quote is checked against what they typed.
 // It may change only memories it wrote itself; owner-written ones are never overwritten.
 const MAX_OPS_PER_TURN = 3;
 const MAX_BODY_CHARS = 240;
@@ -34,6 +36,7 @@ const memoryTool: AgentTool = {
             id: { type: "string", description: "Existing memory id, for update and archive." },
             kind: { type: "string", enum: [...KINDS] },
             body: { type: "string", description: "One self-contained sentence about the owner, at most 240 characters." },
+            ownerWords: { type: "string", description: "For add and update: the owner's own words from ownerMessage that this memory rests on, copied exactly." },
             importance: { type: "integer", minimum: 1, maximum: 5 },
             sensitive: { type: "boolean" },
             expiresAt: { type: "string", description: "ISO date-time after which the fact no longer holds, for time-bound facts." },
@@ -53,9 +56,11 @@ const memoryTool: AgentTool = {
 
 const SYSTEM_PROMPT = [
   "You maintain the long-term memory of a personal assistant for its owner.",
-  "Read the owner's latest message (the assistant's reply is context only) and decide whether it reveals something durable worth remembering in future conversations:",
+  "Read the owner's latest message and decide whether the owner's own words reveal something durable worth remembering in future conversations:",
   "stable preferences about how the owner wants things done, people in their life and how they relate, ongoing commitments and projects, important dates, corrections to what the assistant assumed.",
-  "Do not save: small talk, one-off requests, things only true for this conversation, anything the assistant said rather than the owner, anything already in the owner snapshot (mission, goals, Wheel of Life, profile, projects), or secrets such as passwords, codes and card or account numbers.",
+  "Only what the owner states about themselves counts. A request is not a fact: \"book me a session with Sam\" does not mean the owner has worked with Sam before.",
+  "Every add and update must set ownerWords to the exact words from ownerMessage it rests on; if you cannot quote the owner saying it, do not save it.",
+  "Do not save: small talk, one-off requests, things only true for this conversation, guesses about the owner's history, anything already in the owner snapshot (mission, goals, Wheel of Life, profile, projects), or secrets such as passwords, codes and card or account numbers.",
   "Prefer changing an existing memory over adding a near-duplicate: use update when a memory is outdated or can be made more precise, and archive when it no longer holds. Only memories with source \"agent\" can be updated or archived.",
   "Write each memory as one plain sentence starting with \"Owner\", for example \"Owner's daughter Mia started school in October 2026.\" Include absolute dates, not relative ones.",
   "importance: 5 = core identity or close people, 4 = strong preference or major commitment, 3 = useful context, 1-2 = minor detail.",
@@ -71,7 +76,8 @@ export type RememberOutcome = { held: Array<{ id: string; body: string; importan
 export async function rememberFromTurn(
   db: AgentDb,
   model: AgentModel,
-  input: { ownerId: string; turnId: string; ownerMessage: string; replyText: string; ownerSnapshot?: string; now?: Date },
+  // The assistant's reply is deliberately not an input: its claims are never owner facts (me3-yz6n).
+  input: { ownerId: string; turnId: string; ownerMessage: string; ownerSnapshot?: string; now?: Date },
   signal: AbortSignal,
 ): Promise<RememberOutcome> {
   const held: RememberOutcome["held"] = [];
@@ -98,7 +104,6 @@ export async function rememberFromTurn(
       { role: "user", content: JSON.stringify({
         now: now.toISOString(),
         ownerMessage: ownerMessage.slice(0, 4_000),
-        assistantReply: input.replyText.slice(0, 2_000),
         existingMemories: existing.map(row => ({ id: row.id, kind: row.memory_kind, body: row.body, source: row.source_kind, importance: row.importance, expiresAt: row.expires_at })),
         doNotRepeat: retired.map(row => row.body),
         ...(input.ownerSnapshot ? { ownerSnapshot: input.ownerSnapshot.slice(0, 6_000) } : {}),
@@ -110,7 +115,7 @@ export async function rememberFromTurn(
     onDelta: async () => {},
   });
   const call = response.toolCalls.find(item => item.name === memoryTool.name);
-  const ops = readMemoryOps(call?.arguments.ops, now);
+  const ops = readMemoryOps(call?.arguments.ops, now, ownerMessage);
   if (!ops.length) return { held };
 
   const ownedByAgent = new Map(existing.filter(row => row.source_kind === "agent").map(row => [row.id, row]));
@@ -150,7 +155,8 @@ export async function rememberFromTurn(
   return { held: held.sort((a, b) => b.importance - a.importance) };
 }
 
-function readMemoryOps(value: unknown, now: Date): MemoryOp[] {
+function readMemoryOps(value: unknown, now: Date, ownerMessage: string): MemoryOp[] {
+  const said = comparable(ownerMessage);
   if (!Array.isArray(value)) return [];
   const ops: MemoryOp[] = [];
   for (const item of value.slice(0, 10)) {
@@ -162,7 +168,9 @@ function readMemoryOps(value: unknown, now: Date): MemoryOp[] {
       continue;
     }
     const body = readBody(raw.body);
-    if (!body) continue;
+    // A memory stands only on words the owner typed this turn; anything else is the model's own claim.
+    const quote = typeof raw.ownerWords === "string" ? comparable(raw.ownerWords) : "";
+    if (!body || quote.trim().length < 3 || !said.includes(quote)) continue;
     const expiresAt = readExpiry(raw.expiresAt, now);
     if (raw.op === "update") {
       if (id) ops.push({ op: "update", id, body, importance: raw.importance === undefined ? null : readImportance(raw.importance), expiresAt });
@@ -191,6 +199,11 @@ function readExpiry(value: unknown, now: Date): string | null {
   if (typeof value !== "string") return null;
   const time = Date.parse(value);
   return Number.isFinite(time) && time > now.getTime() ? new Date(time).toISOString() : null;
+}
+
+function comparable(text: string): string {
+  const words = text.toLowerCase().replace(/[’‘]/g, "'").replace(/[^\p{L}\p{N}']+/gu, " ").trim();
+  return words ? ` ${words} ` : "";
 }
 
 function normalizeBody(body: string): string {

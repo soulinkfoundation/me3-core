@@ -13,7 +13,7 @@ import { isCorePluginEnabled } from "./plugins";
 import { getOwnerProfile } from "./sites";
 import { SoupUnavailableError, soupMinutes, type NewsStory, type NewsToday, type SoupBowlItem, type SoupClient, type SoupMedium } from "./soup-client";
 import { localInstant, localParts, runWithFastModel, soupClientFor } from "./soup-servings";
-import { SOUP_PLUGIN_ID, getSoupTaste, parseSoupTaste, type NewsPrefs, type SoupTaste } from "./soup-taste";
+import { SOUP_PLUGIN_ID, getSoupTaste, parseSoupTaste, type NewsFeeling, type NewsPrefs, type SoupTaste } from "./soup-taste";
 import { newsFixtureFor, newsFixtureGood, newsFixturePicks } from "./testing/news-today.fixture";
 import { parseJsonRecord } from "./workspace-input";
 import type { Env } from "./types";
@@ -101,6 +101,9 @@ export type NewsCandidates = {
 };
 
 /** Sorts Soup's answer into the paper's lanes and drops anything the owner wants less of. */
+/** The topic name the paper gives to pieces from voices the owner follows. */
+export const FOLLOWED_LANE = "from voices you follow";
+
 export function toNewsCandidates(news: NewsToday, taste: Pick<SoupTaste, "workTopics" | "interests" | "lessOf">): NewsCandidates {
   const lessOf = taste.lessOf;
   const keep = (story: NewsStory) => !lessOf.length || !lessOf.some(topic => [story.headline, ...story.topics].join(" ").toLowerCase().includes(topic));
@@ -108,12 +111,17 @@ export function toNewsCandidates(news: NewsToday, taste: Pick<SoupTaste, "workTo
     const stories = (news.byTopic.find(entry => entry.topic === word)?.stories || []).filter(keep);
     return stories.length ? [{ topic: word, stories }] : [];
   });
+  // Pieces from the voices the owner follows: reading joins their own topics, first in line;
+  // episodes and videos go to the front of the media queue.
+  const followed = (news.followed || []).filter(keep);
+  const followedRead = followed.filter(story => story.medium === "read");
+  const followedIds = new Set(followed.map(story => story.id));
   return {
     front: news.frontPage.filter(keep),
     work: lane(taste.workTopics.map(topic => topic.topic)),
-    mine: lane(taste.interests),
+    mine: [...(followedRead.length ? [{ topic: FOLLOWED_LANE, stories: followedRead }] : []), ...lane(taste.interests)],
     local: news.local.filter(keep),
-    media: news.media.filter(keep),
+    media: [...followed.filter(story => story.medium !== "read"), ...news.media.filter(story => keep(story) && !followedIds.has(story.id))],
     considered: news.meta.considered,
   };
 }
@@ -159,7 +167,11 @@ async function gatherNews(env: Env, client: SoupClient, taste: SoupTaste, prefs:
   const topics = [...taste.workTopics.map(topic => topic.topic), ...taste.interests].slice(0, 12);
   // Soup requires a country. `since` is left to Soup: its own windows keep a week of videos and
   // podcasts and top a quiet topic up from the last three days, which a fixed cut-off would lose.
-  const request = { topics, country: prefs.country || countryFromTimezone(timezone), city: prefs.city, exclude };
+  const request = {
+    topics, country: prefs.country || countryFromTimezone(timezone), city: prefs.city, exclude,
+    base: prefs.base, ...(prefs.bigStories === false ? { bigStories: false } : {}),
+    ...(prefs.follows.length ? { follows: prefs.follows.map(follow => follow.id) } : {}),
+  };
   if (env.ME3_SOUP_NEWS_FIXTURE) return newsFixtureFor(request);
   try { return await client.newsToday(request, AbortSignal.timeout(12_000)); }
   catch (error) {
@@ -215,6 +227,7 @@ const LAYOUT_PROMPT = [
   "The paper is calm and constructive by design. Give the real news that matters, in proportion, but leave out what only frightens or enrages: crime of the day, freak deaths, celebrity misfortune, culture-war rows. Prefer stories that explain, show progress or help the owner act. A story under a topic must really be about that topic, not share a word with it. Weigh the owner's life situation and mission from the snapshot when choosing.",
   "Most stories get no note. A note that only says the story matches one of the owner's topics or interests is not a note: leave it out. Write a note only when a story clearly touches something specific in the snapshot, calendar or tasks (a named project, a trip, a session, a blocked task), and say what it changes for the owner in one plain sentence. Never invent facts that are not given. No emoji, no hype, no advice about feelings or health, and never mention the Wheel of Life, scores or areas.",
   "A work story may carry one next step (actionLabel and actionPrompt) when there is an obvious thing to do; most have none.",
+  "The owner chose how they would like to feel after reading (base, first one leads): hopeful means progress, solutions and good people; motivated means ideas for their work and goals; know means the big stories told straight, explainers before live blogs; connected means their town, community and what's on. Lead with a story that serves the first feeling and lean the rest of the picks towards both. When bigStories is false, leave out national news unless it is widely covered and changes the owner's day.",
   "If the owner found yesterday's paper dull, vary the mix of topics and sources.",
   "Call core_news_layout exactly once with no prose.",
 ].join(" ");
@@ -257,7 +270,7 @@ export type NewsWeek = { calendar: string[]; tasks: string[] };
 
 export async function writeNewsPicks(
   model: AgentModel,
-  input: { candidates: NewsCandidates; taste: Pick<SoupTaste, "workTopics" | "interests" | "lessOf">; ownerSnapshot: string; week: NewsWeek; date: string; city: string | null; lastRating: NewsRating | null },
+  input: { candidates: NewsCandidates; taste: Pick<SoupTaste, "workTopics" | "interests" | "lessOf">; ownerSnapshot: string; week: NewsWeek; date: string; city: string | null; lastRating: NewsRating | null; base?: NewsFeeling[]; bigStories?: boolean; occupation?: string | null },
   signal: AbortSignal,
 ): Promise<PaperPicks | null> {
   const brief = (story: NewsStory) => ({ id: story.id, headline: story.headline, summary: story.summary.slice(0, 220), source: story.sources[0]?.name, ...(story.medium !== "read" ? { medium: story.medium, minutes: soupMinutes(story) } : {}) });
@@ -268,6 +281,9 @@ export async function writeNewsPicks(
       { role: "user", content: JSON.stringify({
         today: input.date,
         city: input.city,
+        base: input.base?.length ? input.base : undefined,
+        bigStories: input.bigStories === false ? false : undefined,
+        ownerWork: input.occupation || undefined,
         topics: { work: input.taste.workTopics.map(topic => topic.topic), mine: input.taste.interests, lessOf: input.taste.lessOf },
         yesterday: input.lastRating === "sleepy" ? "The owner found yesterday's paper dull." : input.lastRating === "fire" ? "The owner loved yesterday's paper." : undefined,
         candidates: { front: input.candidates.front.slice(0, 10).map(brief), work: lane(input.candidates.work), mine: lane(input.candidates.mine), local: input.candidates.local.slice(0, 6).map(brief), media: input.candidates.media.slice(0, 8).map(brief) },
@@ -535,7 +551,7 @@ export async function composeNewsPaper(env: Env, ownerId: string, options: Compo
     if (!allCandidateIds(candidates).length) return fail("Soup had no stories");
     const [modelPicks, weather, good] = await Promise.all([
       loadWeek(env, ownerId, now).then(week => runWithFastModel(env, ownerId, "News picks", (model, ownerSnapshot, timeoutMs) =>
-        writeNewsPicks(model, { candidates, taste, ownerSnapshot, week, date: options.dateKey, city: prefs.city, lastRating: prefs.lastRating }, AbortSignal.timeout(timeoutMs)))),
+        writeNewsPicks(model, { candidates, taste, ownerSnapshot, week, date: options.dateKey, city: prefs.city, lastRating: prefs.lastRating, base: prefs.base, bigStories: prefs.bigStories, occupation: prefs.occupation }, AbortSignal.timeout(timeoutMs)))),
       prefs.lat !== null && prefs.lon !== null ? fetchWeather({ lat: prefs.lat, lon: prefs.lon }) : Promise.resolve(null),
       env.ME3_SOUP_NEWS_FIXTURE ? Promise.resolve(newsFixtureGood({ city: prefs.city })) : findGoodThing(client, exclude),
     ]);

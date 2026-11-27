@@ -1,3 +1,5 @@
+import { getNewsFollowList, resolveNewsSources } from "../news-follow";
+import { NEWS_YOUTUBE_CALLBACK_PATH, collectNewsYouTube, newsYouTubeReturnPage, startNewsYouTube } from "../news-youtube";
 import { JournalInputError } from "../journal";
 import { actOnNewsPaper, buildNewsNow, getNewsPaper, getNewsToday } from "../news-paper";
 import { getNewsSettings, updateNewsSettings } from "../news-settings";
@@ -34,11 +36,30 @@ export function registerSoupRoutes(app: AppHono, deps: OwnerRouteDeps) {
     app.post(`${base}/servings/:id/act`, c => run(c, async () => ({ serving: await actOnSoupServing(c.env, await owner(c), c.req.param("id"), await body(c)) })));
   }
 
+  // Public: Cloud sends the in-app sign-in sheet here, which has no ME3 session. It only forwards
+  // checked tokens to the app; collecting the channels needs the owner.
+  app.get(NEWS_YOUTUBE_CALLBACK_PATH, c => {
+    const page = newsYouTubeReturnPage(c.req.param("app"), { state: c.req.query("state"), handoff: c.req.query("handoff"), error: c.req.query("error") });
+    if (!page) return c.text("Not found", 404);
+    return c.html(page, 200, {
+      "Cache-Control": "no-store",
+      "Content-Security-Policy": "default-src 'none'; style-src 'unsafe-inline'; script-src 'unsafe-inline'",
+      "Referrer-Policy": "no-referrer",
+    });
+  });
+
   // ── News ──
   // What Home shows: the intro until News is set up, then today's paper once it is ready.
   app.get("/api/news/today", c => run(c, async () => getNewsToday(c.env, await owner(c))));
-  app.get("/api/news/settings", c => run(c, async () => getNewsSettings(c.env, await owner(c))));
+  app.get("/api/news/settings", c => run(c, async () => getNewsSettings(c.env, await owner(c), { profile: c.req.query("profile") === "1" })));
   app.patch("/api/news/settings", c => run(c, async () => (await updateNewsSettings(c.env, await owner(c), await body(c))).settings));
+  // Soup's curated voices for the owner's topics and feelings, for "Who do you follow?" in setup.
+  app.get("/api/news/follow", c => run(c, async () => getNewsFollowList(c.env, await owner(c), { medium: c.req.query("medium") })));
+  // Sources the owner names: Soup finds and checks them and returns ids to follow.
+  app.post("/api/news/follow/resolve", c => run(c, async () => { await owner(c); return resolveNewsSources(c.env, await body(c)); }));
+  // Connect YouTube (me3-6ptk.11): a one-off read of the owner's subscriptions through ME3 Cloud.
+  app.post("/api/news/follow/youtube/start", c => run(c, async () => { await owner(c); return startNewsYouTube(c.env, c.req.url, await body(c)); }));
+  app.post("/api/news/follow/youtube/collect", c => run(c, async () => { await owner(c); return collectNewsYouTube(c.env, await body(c)); }));
   // Build today's paper now: after setup, when News is added back to Home, and for local testing.
   app.post("/api/news/build", c => run(c, async () => {
     const input = await body(c);

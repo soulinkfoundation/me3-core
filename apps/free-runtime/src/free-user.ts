@@ -13,7 +13,7 @@ import { addUserSpend, localDay, messagesLeft, nextLocalMidnight, reusableLedger
 import { createD1Adapter } from "./d1-adapter";
 import { getMe3CloudApiOrigin, getMe3CloudOrigin } from "../../worker/src/sites";
 import { freePageRequest, isFreePagePath, ownerFieldsFromFreePage, publicPageFromFreePage } from "./free-page";
-import { FREE_PLAN_NOTE, freeApiAccess, isFreeAllowancePath, freePluginList, freeStarters, freeToolAllowlist, freeTour, isChatTurnPath, isTourPath, rewriteMobileInstall, sanitizeChatTurnBody } from "./policy";
+import { FREE_PLAN_NOTE, freeApiAccess, isFreeAllowancePath, freePluginList, freeStarters, freeToolAllowlist, isChatTurnPath, rewriteMobileInstall, sanitizeChatTurnBody } from "./policy";
 import { exportFreeContent, upgradedReply } from "./upgrade";
 import { activateUserDatabase, prepareUserDatabase, type ActivationInput } from "./user-database";
 
@@ -103,6 +103,10 @@ export class Me3FreeUser extends Me3Agent {
       ME3_USER_AGENT: undefined,
       ME3_DEPLOYMENT_MODE: "self_hosted",
       ME3_AGENT_TOOL_ALLOWLIST: freeToolAllowlist({ news }),
+      // Home cards show only tasks, reminders and goals (plus habits and counters); money and bookings are paid.
+      ME3_HOME_CARDS: "free",
+      // Show me around tours the free plan: Home, the calendar, a reminder and the free me3.app page.
+      ME3_TOUR: "free",
       // Free chat is priced by prompt size: writing and search tools load only when a turn needs them.
       ME3_AGENT_LEAN_TOOLS: "on",
       // One message may not run the model more than a few times, and the agent knows what the plan leaves out.
@@ -464,11 +468,6 @@ export class Me3FreeUser extends Me3Agent {
       const headers = new Headers(response.headers);
       headers.delete("content-length");
       return new Response(JSON.stringify(freeStarters((await response.json()) as Parameters<typeof freeStarters>[0])), { status: response.status, headers });
-    }
-    if (isJson && response.ok && isTourPath(url.pathname)) {
-      const headers = new Headers(response.headers);
-      headers.delete("content-length");
-      return new Response(JSON.stringify(freeTour((await response.json()) as Parameters<typeof freeTour>[0])), { status: response.status, headers });
     }
     if (isJson && response.ok && url.pathname === "/api/plugins") {
       const headers = new Headers(response.headers);

@@ -19,6 +19,8 @@ import ChatFirstSite from "../../components/first-site/ChatFirstSite.vue";
 import ChatPeopleResults from "../../components/first-site/ChatPeopleResults.vue";
 import SoupBowl from "../../components/soup/SoupBowl.vue";
 import NewsChatCard from "../../components/news/NewsChatCard.vue";
+import CustomCardPreview from "../../components/home/CustomCardPreview.vue";
+import { homeCardFromTool, readHomeCardRecord, type HomeCardRecord } from "../../utils/homeCards";
 import { NEWS_PAPER_TOOL, NEWS_SETTINGS_READ_TOOL, NEWS_SETTINGS_TOOL, newsChatCardFromTool, type NewsChatCard as NewsChatCardData } from "../../utils/news";
 import { SOUP_SERVE_TOOL, soupServingIdFromTool, type SoupServing, type SoupServingAction } from "../../utils/soup";
 import Button from "../../components/Button.vue";
@@ -73,6 +75,10 @@ import {
   type AiAgentModelProviderId,
 } from "../../utils/aiModelCatalog";
 import AgentDog from "../../components/AgentDog.vue";
+import MessageDraftCard from "../../components/messaging/MessageDraftCard.vue";
+import PersonMessageCard from "../../components/messaging/PersonMessageCard.vue";
+import { useMessagingStore } from "../../stores/messaging";
+import { placePersonCards, readMessageDraft, waitingCards, type AgentMessageDraft, type PersonMessageCard as PersonCard } from "../../utils/messagingCards";
 import ChatPayments from "../../components/payments/ChatPayments.vue";
 import { createTextReveal } from "../../utils/textReveal";
 
@@ -163,6 +169,7 @@ type AgentSandboxResponse = {
   allowanceNotice?: AgentChatAllowanceNotice | null;
   memoryReview?: AgentChatMemoryReview | null;
   emailDraft?: AgentChatServerEmailDraft | null;
+  messageDraft?: unknown;
   newsCard?: unknown;
   newsServingId?: string | null;
   contentAction?: {
@@ -198,6 +205,7 @@ type AssistantThreadMessage = {
   allowanceNotice?: AgentChatAllowanceNotice | null;
   memoryReview?: AgentChatMemoryReview | null;
   emailDraft?: AgentChatServerEmailDraft | null;
+  messageDraft?: unknown;
   newsCard?: unknown;
   newsServingId?: string | null;
   siteAction?: AgentSandboxResponse["siteAction"];
@@ -504,6 +512,24 @@ async function newsShowFirstPaper(messageId: string) {
   if (card && !newsCardByMessage.value[messageId]) newsCardShown(messageId, card);
   void homePanels.value?.refreshNews();
 }
+// A custom Home card ME3 built or changed (me3-c5h8.2): drawn live under the reply with Add to Home.
+// The reply keeps the card's id, so the preview comes back on reload, read fresh from the install.
+const cardPreviewByMessage = ref<Record<string, { record: HomeCardRecord; isUpdate: boolean }>>({});
+function cardPreviewShown(messageId: string, record: HomeCardRecord, isUpdate: boolean) {
+  cardPreviewByMessage.value = { ...cardPreviewByMessage.value, [messageId]: { record, isUpdate } };
+  // Home's copy follows the card ME3 just made or changed.
+  void homePanels.value?.refreshCards();
+}
+async function restoreCardPreview(messageId: string, saved: unknown) {
+  const homeCard = (saved as { homeCard?: { id?: unknown; isUpdate?: unknown } } | null)?.homeCard;
+  if (!homeCard || typeof homeCard.id !== "string" || cardPreviewByMessage.value[messageId]) return;
+  try {
+    const record = readHomeCardRecord(await api.get(`/home/cards/${encodeURIComponent(homeCard.id)}`));
+    if (record && !cardPreviewByMessage.value[messageId]) cardPreviewByMessage.value = { ...cardPreviewByMessage.value, [messageId]: { record, isUpdate: homeCard.isUpdate === true } };
+  } catch { /* A card removed since shows nothing; the reply still stands. */ }
+}
+function addPreviewToHome(record: HomeCardRecord) { homePanels.value?.addCustomCard(record.card.id); }
+function changePreview(record: HomeCardRecord) { homeSuggestion(`Change my ${record.card.name} card: `); }
 // The cards are saved with ME3's reply, so they are still there when the conversation is reopened.
 function restoreNewsCards(messageId: string, saved: { newsCard?: unknown; newsServingId?: string | null }) {
   const card = newsChatCardFromTool(saved.newsCard);
@@ -594,6 +620,44 @@ function isFirstAllowanceNotice(index: number): boolean {
 const assistantConsoleMessages = computed(() =>
   chatMessages.value.filter((message) => message.id !== "assistant-ready"),
 );
+
+// People's Soulink conversations, as on the phones: placed in the thread by time; on an empty chat only what waits.
+const messaging = useMessagingStore();
+function personSlotKey(message: { id?: string }, index: number): string {
+  return message.id || `index-${index}`;
+}
+const placedPersonCards = computed(() =>
+  placePersonCards(
+    messaging.cards,
+    assistantConsoleMessages.value.map((message, index) => ({
+      id: personSlotKey(message, index),
+      createdAt: message.createdAt ? Date.parse(message.createdAt) : null,
+    })),
+  ),
+);
+/** Empty chat: cards shown this visit (a reply settles to its line), and cards dismissed at their latest message. */
+const emptyChatKept = ref<Set<string>>(new Set());
+const dismissedPersonCards = ref<Record<string, string>>({});
+const emptyChatWaiting = computed(() =>
+  waitingCards(messaging.cards, { dismissed: dismissedPersonCards.value, keep: emptyChatKept.value }),
+);
+function keepWaitingCard(card: PersonCard) {
+  if (emptyChatKept.value.has(card.cid)) return;
+  emptyChatKept.value = new Set([...emptyChatKept.value, card.cid]);
+}
+function dismissWaitingCard(card: PersonCard) {
+  const kept = new Set(emptyChatKept.value);
+  kept.delete(card.cid);
+  emptyChatKept.value = kept;
+  dismissedPersonCards.value = { ...dismissedPersonCards.value, [card.cid]: card.latest.id };
+  // Marked read in Soulink, so the badge and Messages agree.
+  if (card.unreadCount > 0) void messaging.markRead(card.cid);
+}
+// A fresh visit to an empty chat starts from what's waiting now.
+watch(() => assistantConsoleMessages.value.length > 0, (hasMessages) => { if (hasMessages) emptyChatKept.value = new Set(); });
+function openPersonConversation(cid: string) {
+  void router.push({ path: "/conversations", query: { c: cid } });
+}
 const assistantSitePreview = computed(() =>
   findLatestAssistantSitePreview(assistantConsoleMessages.value),
 );
@@ -900,6 +964,7 @@ function mapAssistantThreadMessages(messages: AssistantThreadMessage[]) {
       allowanceNotice: AgentChatAllowanceNotice | null;
       memoryReview: AgentChatMemoryReview | null;
       emailDraftAction: AgentChatEmailDraftAction | null;
+      messageDraft: AgentMessageDraft | null;
       attachments: AgentChatMessageAttachment[];
       actionHref: string | null;
       actionLabel: string | null;
@@ -915,11 +980,13 @@ function mapAssistantThreadMessages(messages: AssistantThreadMessage[]) {
       allowanceNotice: message.allowanceNotice || null,
       memoryReview: message.memoryReview || null,
       emailDraftAction: null,
+      messageDraft: message.role === "assistant" ? readMessageDraft(message.messageDraft) : null,
       actionHref: actionLink?.href || null,
       actionLabel: actionLink?.label || null,
     };
     if (message.role === "assistant") {
       restoreNewsCards(message.id, message);
+      void restoreCardPreview(message.id, message);
       mappedMessage.emailDraftAction = message.emailDraft
         ? createServerAgentChatEmailDraftAction(message, message.emailDraft)
         : createAgentChatEmailDraftAction(message, previousUserText);
@@ -1787,6 +1854,8 @@ async function submitAssistantText(
             // Home shows the News card as soon as setup is confirmed.
             if (card?.kind === "ready") void homePanels.value?.refreshNews();
           }
+          const builtCard = data.state === "complete" ? homeCardFromTool(data.toolName, toolResult) : null;
+          if (builtCard) { ensureAssistantMessage(); cardPreviewShown(assistantMessageId, builtCard.record, builtCard.isUpdate); }
           if (data.toolName === SOUP_SERVE_TOOL && data.state === "complete" && toolResult?.status === "ok") {
             const servingId = soupServingIdFromTool(toolResult.data);
             if (servingId) { ensureAssistantMessage(); void loadSoupServing(assistantMessageId, servingId); }
@@ -1999,11 +2068,12 @@ function applyAssistantResultToMessage(
   message.targetPresentation = normalizeAgentTargetPresentation(result.targetPresentation);
   message.allowanceNotice = result.allowanceNotice || null;
   message.memoryReview = result.memoryReview || null;
-  if (message.id) restoreNewsCards(message.id, result);
+  if (message.id) { restoreNewsCards(message.id, result); void restoreCardPreview(message.id, result); }
   message.emailDraftAction = result.emailDraft
     ? createServerAgentChatEmailDraftAction(message, result.emailDraft)
     : createAgentChatEmailDraftAction(message, previousUserTextForAssistantMessage(message));
   hydrateAssistantEmailDraftMessage(message);
+  message.messageDraft = readMessageDraft(result.messageDraft);
   message.inboxLink = result.emailAction?.kind === "drafted";
   message.reminderLink =
     result.reminderAction?.kind === "created" ||
@@ -2621,7 +2691,25 @@ function messageFromUnknown(err: unknown, fallback: string) {
           <div
             v-else-if="assistantConsoleMessages.length === 0 && voiceDictationState !== 'listening' && !siteAskOpen"
             class="assistant-empty-state"
+            :class="{ 'assistant-empty-state--people': emptyChatWaiting.shown.length > 0 }"
           >
+            <!-- Only what waits on the owner, newest first, three at most; swipe or dismiss marks it read. -->
+            <div v-if="emptyChatWaiting.shown.length" class="assistant-empty-state__people" aria-label="Messages waiting">
+              <TransitionGroup name="assistant-person-card">
+                <PersonMessageCard
+                  v-for="card in emptyChatWaiting.shown"
+                  :key="`person-${card.cid}-waiting`"
+                  :card="card"
+                  :dismissible="card.kind.type !== 'request'"
+                  @open="openPersonConversation"
+                  @dismiss="dismissWaitingCard(card)"
+                  @vue:mounted="keepWaitingCard(card)"
+                />
+              </TransitionGroup>
+              <RouterLink v-if="emptyChatWaiting.more > 0" to="/conversations" class="assistant-empty-state__see-all" data-testid="empty-chat-see-all-messages">
+                {{ emptyChatWaiting.more }} more · See all
+              </RouterLink>
+            </div>
             <!-- A tour card with nothing to point at sits over the welcome, which fades out under it. -->
             <div class="assistant-empty-state__welcome" data-tour-backdrop>
               <AgentDog :size="128" />
@@ -2646,18 +2734,32 @@ function messageFromUnknown(err: unknown, fallback: string) {
                 data-testid="chat-starter"
                 @click="startStarterPrompt(starter)"
               >
-                <span v-if="starter.emoji" class="starter-prompt__emoji" aria-hidden="true">{{ starter.emoji }}</span>
+                <!-- Play with ME3 wears the ME3 dog itself rather than a generic emoji dog. -->
+                <img v-if="starter.id === 'game'" class="starter-prompt__dog" src="/me3-dog-head-emoji-smooth.webp" alt="" aria-hidden="true" />
+                <span v-else-if="starter.emoji" class="starter-prompt__emoji" aria-hidden="true">{{ starter.emoji }}</span>
                 <span>{{ starter.label }}</span>
               </button>
             </div>
           </div>
 
-          <article
+          <template
             v-for="(message, index) in assistantConsoleMessages"
             :key="
               message.id ||
               `${message.role}-${index}-${message.text.slice(0, 24)}`
             "
+          >
+          <!-- People's conversations sit in the thread by time, before the first message sent after them. -->
+          <TransitionGroup name="assistant-person-card">
+            <PersonMessageCard
+              v-for="card in placedPersonCards.before.get(personSlotKey(message, index)) ?? []"
+              :key="`person-${card.cid}-${personSlotKey(message, index)}`"
+              class="assistant-person-card"
+              :card="card"
+              @open="openPersonConversation"
+            />
+          </TransitionGroup>
+          <article
             class="assistant-message"
             :class="`assistant-message--${message.role}`"
             :data-assistant-message-id="message.id || undefined"
@@ -3169,8 +3271,21 @@ function messageFromUnknown(err: unknown, fallback: string) {
             </div>
             <ChatPeopleResults v-if="message.id && peopleByMessage[message.id]" :people="peopleByMessage[message.id]" :busy="assistantSending" @book="bookPerson" />
             <section v-if="message.id && soupByMessage[message.id]" class="assistant-soup-bowl" aria-label="Picked for you"><SoupBowl :serving="soupByMessage[message.id]" @act="(action, itemId) => soupAct(message.id!, action, itemId)" /></section>
+            <CustomCardPreview v-if="message.id && cardPreviewByMessage[message.id]" :record="cardPreviewByMessage[message.id].record" :is-update="cardPreviewByMessage[message.id].isUpdate" :pinned="Boolean(homePanels?.customCardOnHome(cardPreviewByMessage[message.id].record.card.id))" @add-to-home="addPreviewToHome(cardPreviewByMessage[message.id!].record)" @change="changePreview(cardPreviewByMessage[message.id!].record)" @ask="homeSuggestion" @changed="homePanels?.refreshCards()" />
             <NewsChatCard v-if="message.id && newsCardByMessage[message.id]" class="assistant-news-card" :card="newsCardByMessage[message.id]" :busy="assistantSending" :latest="message.id === lastNewsCardMessageId" @say="submitAssistantText" @time="newsTimeChosen" @read="readNews" />
+            <MessageDraftCard v-if="message.role === 'assistant' && message.messageDraft" :draft="message.messageDraft" />
           </article>
+          </template>
+
+          <TransitionGroup name="assistant-person-card">
+            <PersonMessageCard
+              v-for="card in placedPersonCards.trailing"
+              :key="`person-${card.cid}-end`"
+              class="assistant-person-card"
+              :card="card"
+              @open="openPersonConversation"
+            />
+          </TransitionGroup>
 
           <SiteBuildAskCard v-if="siteAskOpen && !siteBuilderMode" class="assistant-message assistant-message--assistant" :busy="assistantSending" @submit="submitSiteAsk" @close="closeSiteAsk" />
           <ChatFirstSite
@@ -3892,14 +4007,26 @@ function messageFromUnknown(err: unknown, fallback: string) {
   padding: clamp(60px, 17vh, 170px) 0 10px; text-align: center;
 }
 .assistant-empty-state__welcome { display: grid; gap: 12px; justify-items: center; }
+/* Waiting conversations sit above the welcome, so the welcome needs less room above it. */
+.assistant-empty-state--people { padding-top: 12px; }
+.assistant-empty-state__people { display: grid; gap: 12px; width: min(560px, 100%); margin-bottom: clamp(16px, 6vh, 56px); text-align: left; }
+.assistant-empty-state__see-all { justify-self: center; padding: 6px 12px; color: var(--ui-text-muted); font-size: 14px; font-weight: 500; text-decoration: none; }
+.assistant-empty-state__see-all:hover { color: var(--ui-text); }
+.assistant-person-card { width: min(560px, 100%); }
+/* A card that moves (a send, a reply) leaves its old place at once and fades in at the new one. */
+.assistant-person-card-enter-active { transition: opacity .22s ease; }
+.assistant-person-card-enter-from { opacity: 0; }
+@media (prefers-reduced-motion: reduce) { .assistant-person-card-enter-active { transition: none; } }
 .assistant-empty-state__heading { margin: 6px 0 0; font-size: 24px; font-weight: 600; letter-spacing: -.02em; }
 .assistant-empty-state__hint { margin: 0; color: var(--ui-text-muted); font-size: 15px; }
 /* Small centred badges that wrap to one or two rows (me3-q6la.2). */
 .starter-prompt-list { display: flex; flex-wrap: wrap; justify-content: center; gap: 8px; width: min(520px, 100%); margin-top: 14px; }
-.starter-prompt { display: inline-flex; align-items: center; gap: 6px; min-height: 44px; max-width: 100%; border: 1px solid var(--ui-border); border-radius: 999px; padding: 8px 14px; background: var(--ui-surface); color: var(--ui-text); font: 500 14px var(--font-sans); white-space: nowrap; cursor: pointer; }
+/* Borderless pills lifted by a soft shadow, as on iOS and Android (owner design pass, 26 Nov 2026). */
+.starter-prompt { display: inline-flex; align-items: center; gap: 6px; min-height: 44px; max-width: 100%; border: 0; border-radius: 999px; padding: 8px 14px; background: var(--ui-surface); color: var(--ui-text); font: 500 14px var(--font-sans); white-space: nowrap; cursor: pointer; box-shadow: 0 1px 2px rgb(0 0 0 / 6%), 0 4px 12px rgb(0 0 0 / 8%); }
+.starter-prompt__dog { width: 22px; height: 22px; object-fit: contain; flex: none; }
 .starter-prompt > span:last-child { overflow: hidden; text-overflow: ellipsis; }
 .starter-prompt__emoji { flex-shrink: 0; font-size: 16px; line-height: 1; }
-.starter-prompt--lead { border-color: var(--ui-accent); }
+
 /* The only choice on a first visit: a soft ring pulses out so it's clearly the thing to click. */
 .starter-prompt--pulse { padding: 10px 18px; font-size: 15px; animation: starter-pulse 2s ease-out infinite; }
 @keyframes starter-pulse {

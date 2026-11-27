@@ -39,7 +39,7 @@ describe("free tier policy", () => {
 
   it("limits the agent to free tools", () => {
     const env = { ME3_AGENT_TOOL_ALLOWLIST: freeToolAllowlist({ news: false }) };
-    for (const name of ["core_mission_task_create", "core_journal_save", "core_calendar_event_create", "core_reminders_create", "core_memory_search", "core_tools_load", "core_contacts_search", "core_messages_draft"]) expect(toolAllowedByEnv(env, name), name).toBe(true);
+    for (const name of ["core_mission_task_create", "core_journal_save", "core_calendar_event_create", "core_reminders_create", "core_memory_search", "core_tools_load", "core_contacts_search", "core_messages_draft", "core_cards_create", "core_cards_act"]) expect(toolAllowedByEnv(env, name), name).toBe(true);
     for (const name of ["core_mailbox_send", "core_web_search", "core_images_generate", "core_sites_starter_draft", "core_payments_propose", "core_computer_start", "core_news_paper", "core_social_queue_read", "core_coding_send", "core_accounts_summary", "core_contact_save"]) expect(toolAllowedByEnv(env, name), name).toBe(false);
     expect(toolAllowedByEnv({ ME3_AGENT_TOOL_ALLOWLIST: freeToolAllowlist({ news: true }) }, "core_news_paper")).toBe(true);
   });

@@ -29,6 +29,7 @@ export {
   type AgentReminderInput,
   type AgentReminderParseResult,
 } from "./reminders";
+export { readBookingsInRangeForAgent, type AgentBooking } from "./bookings";
 
 export {
   archiveAgentMissionTask,

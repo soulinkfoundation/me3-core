@@ -4,6 +4,7 @@ import { readManagedAllowanceNotice, type ManagedAllowanceNotice } from "../mana
 import { readAgentEmailDraft, type AgentEmailDraft } from "../agent-email-draft";
 import { readAgentMessageDraft, type AgentMessageDraft } from "../agent-message-draft";
 import { readAgentNewsCard, readAgentNewsServingId, type AgentNewsCard } from "../agent-news-card";
+import { readAgentHomeCard, type AgentHomeCard } from "../agent-home-card";
 import { readSuggestedReplies } from "../agent-suggested-replies";
 import { parseAgentTargetSelection, preflightAgentTargetSelection, persistAgentTargetSelectionInput } from "../agent-target-selection";
 import { revalidateAgentTargetPayload } from "../agent-target-projection";
@@ -714,6 +715,7 @@ export function registerAssistantRoutes(app: AppHono, deps: AssistantRouteDeps) 
       messageDraft: metadata.messageDraft || undefined,
       newsCard: metadata.newsCard || undefined,
       newsServingId: metadata.newsServingId || undefined,
+      homeCard: metadata.homeCard || undefined,
       suggestedReplies: metadata.suggestedReplies.length ? metadata.suggestedReplies : undefined,
       attachments: metadata.attachments.length ? metadata.attachments : undefined,
     };
@@ -759,15 +761,16 @@ export function registerAssistantRoutes(app: AppHono, deps: AssistantRouteDeps) 
     messageDraft: AgentMessageDraft | null;
     newsCard: AgentNewsCard | null;
     newsServingId: string | null;
+    homeCard: AgentHomeCard | null;
     suggestedReplies: string[];
     attachments: AssistantAttachmentAuditManifestItem[];
   } {
     if (!metadataJson)
-      return { actionCards: [], targetPresentation: null, imageAction: null, siteAction: null, allowanceNotice: null, emailDraft: null, messageDraft: null, newsCard: null, newsServingId: null, suggestedReplies: [], attachments: [] };
+      return { actionCards: [], targetPresentation: null, imageAction: null, siteAction: null, allowanceNotice: null, emailDraft: null, messageDraft: null, newsCard: null, newsServingId: null, homeCard: null, suggestedReplies: [], attachments: [] };
     try {
       const parsed = JSON.parse(metadataJson) as unknown;
       if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
-        return { actionCards: [], targetPresentation: null, imageAction: null, siteAction: null, allowanceNotice: null, emailDraft: null, messageDraft: null, newsCard: null, newsServingId: null, suggestedReplies: [], attachments: [] };
+        return { actionCards: [], targetPresentation: null, imageAction: null, siteAction: null, allowanceNotice: null, emailDraft: null, messageDraft: null, newsCard: null, newsServingId: null, homeCard: null, suggestedReplies: [], attachments: [] };
       }
       const metadata = parsed as Record<string, unknown>;
       const cards = metadata.actionCards;
@@ -791,11 +794,12 @@ export function registerAssistantRoutes(app: AppHono, deps: AssistantRouteDeps) 
         messageDraft: metadata.runtime === "agent" ? readAgentMessageDraft(metadata.messageDraft) : null,
         newsCard: metadata.runtime === "agent" ? readAgentNewsCard(metadata.newsCard) : null,
         newsServingId: metadata.runtime === "agent" ? readAgentNewsServingId(metadata.newsServingId) : null,
+        homeCard: metadata.runtime === "agent" ? readAgentHomeCard(metadata.homeCard) : null,
         suggestedReplies: metadata.runtime === "agent" ? readSuggestedReplies(metadata.suggestedReplies) : [],
         attachments: createAssistantAttachmentAuditManifest(attachments),
       };
     } catch {
-      return { actionCards: [], targetPresentation: null, imageAction: null, siteAction: null, allowanceNotice: null, emailDraft: null, messageDraft: null, newsCard: null, newsServingId: null, suggestedReplies: [], attachments: [] };
+      return { actionCards: [], targetPresentation: null, imageAction: null, siteAction: null, allowanceNotice: null, emailDraft: null, messageDraft: null, newsCard: null, newsServingId: null, homeCard: null, suggestedReplies: [], attachments: [] };
     }
   }
 

@@ -14,7 +14,7 @@ import { useVoiceDictation } from "../../composables/useVoiceDictation";
 import Button from "../Button.vue";
 import UiIcon from "../UiIcon.vue";
 
-// The Notes card body on Home (me3-qvyt): the latest three standalone notes, and a field to jot a new one.
+// The Writing card's notes on Home (me3-qvyt): the latest two standalone notes, and a field to jot a new one.
 // Standalone notes are Journal articles; daily notes never show here.
 export type HomeNote = { id: string; title: string | null; preview?: string; projectName?: string | null };
 const props = defineProps<{ notes: HomeNote[]; open: boolean }>();
@@ -101,7 +101,6 @@ async function expand() {
       <span class="notes-row__label">{{ note.title || note.preview || 'Untitled note' }}</span>
       <span v-if="note.projectName" class="notes-row__tag">{{ note.projectName }}</span>
     </RouterLink>
-    <p v-if="!notes.length" class="notes-empty">No notes yet</p>
   </template>
 </template>
 
@@ -110,7 +109,6 @@ async function expand() {
 .notes-row:hover .notes-row__label { text-decoration: underline; text-underline-offset: 3px; }
 .notes-row__label { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .notes-row__tag { flex: none; max-width: 45%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; padding: 2px 8px; border-radius: 999px; background: var(--ui-accent-soft); color: var(--ui-accent-strong); font-size: 12px; font-weight: 600; }
-.notes-empty { min-height: 36px; display: flex; align-items: center; margin: 0; color: var(--ui-text-muted); font-size: 14px; }
 .notes-new { display: grid; gap: 10px; padding-top: 2px; }
 .notes-new textarea { width: 100%; min-height: 110px; padding: 12px 14px; border: 0; border-radius: 14px; background: var(--ui-surface-muted); color: var(--ui-text); font: inherit; font-size: 16px; line-height: 1.5; resize: vertical; }
 /* The caret marks focus; the mockup keeps the field free of an accent border. */

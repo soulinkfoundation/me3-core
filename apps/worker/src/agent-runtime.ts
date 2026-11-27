@@ -22,6 +22,7 @@ import { getAiGatewayRuntimeConfig } from "./ai-gateway";
 import { loadAgentEmailDraft } from "./agent-email-draft";
 import { loadAgentMessageDraft } from "./agent-message-draft";
 import { loadAgentNewsReply } from "./agent-news-card";
+import { loadAgentHomeCard } from "./agent-home-card";
 import { ownerFacingMemory, rememberFromTurn } from "./agent-memory";
 import { suggestAgentReplies } from "./agent-suggested-replies";
 import { getManagedAiBillingSettings, managedAllowanceNotice, syncManagedAiUsage, MANAGED_AI_FALLBACK_MODEL, type ManagedAiBillingSettings, type ManagedAllowanceNotice } from "./managed-ai-billing";
@@ -159,7 +160,7 @@ export async function executeNewAgentTurn(env:Env,input:NewAgentDispatchInput,si
       ?suggestAgentReplies(modelFor(fastName,{purpose:"suggested_replies"}),{ownerMessage:input.messageText,replyText:result.replyText},AbortSignal.any([signal,AbortSignal.timeout(8_000)])).catch(()=>[] as string[])
       :Promise.resolve([] as string[]);
     const remembered=finished&&!shed&&memoryOn
-      ?rememberFromTurn(env.DB,modelFor(fastName,{purpose:"memory_extraction"}),{ownerId:input.userId,turnId:input.turnId,ownerMessage:input.messageText,replyText:result.replyText,ownerSnapshot},AbortSignal.any([signal,AbortSignal.timeout(10_000)])).catch(()=>undefined)
+      ?rememberFromTurn(env.DB,modelFor(fastName,{purpose:"memory_extraction"}),{ownerId:input.userId,turnId:input.turnId,ownerMessage:input.messageText,ownerSnapshot},AbortSignal.any([signal,AbortSignal.timeout(10_000)])).catch(()=>undefined)
       :Promise.resolve(undefined);
     // At most one "Remember this?" card per reply: the most important memory held back this turn.
     const memoryReview=remembered.then(memory=>memory?.held[0]?{memoryId:memory.held[0].id,id:memory.held[0].id,body:memory.held[0].body,displayBody:ownerFacingMemory(memory.held[0].body),status:"pending" as const}:null);
@@ -285,16 +286,17 @@ export async function createAgentModels(env:Env,scope:AgentModelScope) {
 async function persistNewAgentResult(env:Env,input:NewAgentDispatchInput,result:AgentTurnResult,onEvent?: (event:string,data:Record<string,unknown>,seq:number)=>void,allowanceNotice:Promise<ManagedAllowanceNotice|null>=Promise.resolve(null),followUps:Promise<string[]>=Promise.resolve([]),memoryReview:Promise<{memoryId:string;id:string;body:string;displayBody:string;status:"pending"}|null>=Promise.resolve(null)) {
   const scope={ownerId:input.userId,threadId:input.threadId,turnId:input.turnId};
   // The record loads overlap the follow-up and memory model calls rather than waiting behind them.
-  const [targetPresentation,imageAction,emailDraft,messageDraft,news,notice,suggestedReplies,memory]=await Promise.all([
+  const [targetPresentation,imageAction,emailDraft,messageDraft,news,notice,suggestedReplies,memory,homeCard]=await Promise.all([
     result.targetPresentation||input.targetSelection?loadAgentTargetPresentation(env,scope):null,
     loadAgentGeneratedImageAction(env,scope),
     loadAgentEmailDraft(env,{ownerId:input.userId,turnId:input.turnId}),
     loadAgentMessageDraft(env,{ownerId:input.userId,turnId:input.turnId}),
     loadAgentNewsReply(env,{ownerId:input.userId,turnId:input.turnId}),
     allowanceNotice,followUps,memoryReview,
+    loadAgentHomeCard(env,{ownerId:input.userId,turnId:input.turnId}),
   ]);
   const messageId=`${input.turnId}:assistant:${result.status}:${result.approvalId||"final"}`;
-  const payload={ok:result.status==="complete"||result.status==="needs_approval",auditId:input.turnId,turnId:input.turnId,threadId:input.threadId,specialist:"core.agent",runtime:"agent",replyText:result.replyText,model:result.trace.model,source:"workers-ai-gateway",mode:input.mode||"default",status:result.status,approvalId:result.approvalId||null,trace:result.trace,streamMetrics:{timeToFirstTokenMs:result.trace.timeToFirstTokenMs,totalDurationMs:result.trace.totalDurationMs,modelRequestCount:result.modelRequestCount,toolCallCount:result.toolCalls.length},...(imageAction?{imageAction}:{}),...(targetPresentation?{targetPresentation}:{}),...(notice?{allowanceNotice:notice}:{}),...(emailDraft?{emailDraft}:{}),...(messageDraft?{messageDraft}:{}),...(news.newsCard?{newsCard:news.newsCard}:{}),...(news.newsServingId?{newsServingId:news.newsServingId}:{}),...(suggestedReplies.length?{suggestedReplies}:{}),...(memory?{memoryReview:memory}:{}),...(result.status==="failed"?{error:result.replyText}:{})};
+  const payload={ok:result.status==="complete"||result.status==="needs_approval",auditId:input.turnId,turnId:input.turnId,threadId:input.threadId,specialist:"core.agent",runtime:"agent",replyText:result.replyText,model:result.trace.model,source:"workers-ai-gateway",mode:input.mode||"default",status:result.status,approvalId:result.approvalId||null,trace:result.trace,streamMetrics:{timeToFirstTokenMs:result.trace.timeToFirstTokenMs,totalDurationMs:result.trace.totalDurationMs,modelRequestCount:result.modelRequestCount,toolCallCount:result.toolCalls.length},...(imageAction?{imageAction}:{}),...(targetPresentation?{targetPresentation}:{}),...(notice?{allowanceNotice:notice}:{}),...(emailDraft?{emailDraft}:{}),...(messageDraft?{messageDraft}:{}),...(news.newsCard?{newsCard:news.newsCard}:{}),...(news.newsServingId?{newsServingId:news.newsServingId}:{}),...(homeCard?{homeCard}:{}),...(suggestedReplies.length?{suggestedReplies}:{}),...(memory?{memoryReview:memory}:{}),...(result.status==="failed"?{error:result.replyText}:{})};
   await env.DB.batch([
     env.DB.prepare("INSERT OR IGNORE INTO assistant_messages(id,owner_id,thread_id,role,content,metadata_json) VALUES(?,?,?,'assistant',?,?)").bind(messageId,input.userId,input.threadId,result.replyText,JSON.stringify(payload)),
     env.DB.prepare("UPDATE me3_agent_turns SET response_json=?,trace_json=?,updated_at=CURRENT_TIMESTAMP WHERE owner_id=? AND turn_id=?").bind(JSON.stringify(payload),JSON.stringify(result.trace),input.userId,input.turnId),
@@ -312,7 +314,6 @@ async function persistNewAgentResult(env:Env,input:NewAgentDispatchInput,result:
   return visiblePayload;
 }
 
-export function parkedFeaturesOn(env:Pick<Env,"ME3_PARKED_FEATURES">):boolean {return env.ME3_PARKED_FEATURES?.trim().toLowerCase()==="on";}
 async function newAgentServices(env:Env,ownerId:string,computerHost?:ComputerJobHost):Promise<AgentDomainServices> {
   return {
     // Hidden unless the installation has Browser Run and the turn runs in the owner's agent instance.
@@ -328,8 +329,7 @@ async function newAgentServices(env:Env,ownerId:string,computerHost?:ComputerJob
     people:createPeopleSearchToolServices(env,ownerId) as unknown as AgentDomainServices["people"],
     web:createWebResearchToolServices(env,ownerId),landingPageEnv:env as never,
     sites:{draft:input=>draftStarterSite(env,ownerId,input),publish:()=>publishStarterSite(env,ownerId),domainOptions:query=>getAgentDomainOffer(env,ownerId,query)},
-    // Parked after the first release (me3-5u97.6): tools hide until ME3_PARKED_FEATURES is "on".
-    cards:parkedFeaturesOn(env)?createAgentHomeCardServices(env,ownerId):undefined,
+    cards:createAgentHomeCardServices(env,ownerId),
     coding:await createCodingAgentServices(env),
     soup:createAgentSoupServices(env,ownerId),
     socialShare:{shareSitePost:async input=>{const result=await shareOwnerSitePost(env,ownerId,input);return{postId:result.post.post.id,created:result.created,platforms:result.post.versions.map(version=>version.platform)};}},

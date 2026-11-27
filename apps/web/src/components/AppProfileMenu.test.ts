@@ -20,7 +20,7 @@ const routeComponent = {
 
 async function mountProfileMenu(
   plugins: Array<{ id: string; status: string; enabled: boolean }>,
-  props: Record<string, never> = {},
+  props: Record<string, unknown> = {},
   navigationFeatures: Array<{ id: string; visible: boolean }> = [
     { id: "assistant", visible: true },
     { id: "calendar", visible: true },
@@ -106,6 +106,7 @@ describe("AppProfileMenu optional plugin links", () => {
         .map((link) => link.attributes("aria-label")),
     ).toEqual([
       "Edit website",
+      "Messages",
       "Email",
       "Calendar",
       "Tasks",
@@ -131,6 +132,18 @@ describe("AppProfileMenu optional plugin links", () => {
     expect(wrapper.find('[aria-label="App connections"]').exists()).toBe(false);
     expect(wrapper.find('[aria-label="Plugins"]').exists()).toBe(false);
     wrapper.unmount();
+  });
+
+  it("leads with Home only where it replaces the header's X", async () => {
+    const onHome = await mountProfileMenu([]);
+    expect(onHome.find('[data-testid="menu-home"]').exists()).toBe(false);
+    onHome.unmount();
+
+    const onFeature = await mountProfileMenu([], { showHome: true });
+    const rows = onFeature.findAll("nav .profile-menu__row");
+    expect(rows[0].attributes("aria-label")).toBe("Home");
+    expect(rows[0].attributes("href")).toBe("/assistant");
+    onFeature.unmount();
   });
 
   it("uses a small icon-only appearance switch", async () => {

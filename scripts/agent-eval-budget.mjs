@@ -6,6 +6,7 @@ export const DEFAULT_EVAL_PRICING = Object.freeze({
   "openai:gpt-6-astra": { input: 10, output: 50, cached: 1, cacheWrite: 12, source: "https://developers.cloudflare.com/ai/models/openai/gpt-6-astra/", verifiedAt: "2026-10-10" },
   "anthropic:claude-opus-5.5": { input: 4, output: 20, cached: 0.2, cacheWrite: 5, source: "https://platform.claude.com/docs/en/models/opus-5-5/whats-new-opus-5-5", verifiedAt: "2026-10-10" },
   "anthropic:claude-sonnet-5.5": { input: 2, output: 10, cached: 0.2, cacheWrite: 2.5, source: "https://developers.cloudflare.com/ai/models/anthropic/claude-sonnet-5.5/", verifiedAt: "2026-10-10" },
+  "anthropic:claude-haiku-5.5": { input: 0.1, output: 0.5, cached: 0.01, cacheWrite: 0.125, source: "https://developers.cloudflare.com/ai/models/anthropic/claude-haiku-5.5/", verifiedAt: "2026-11-24" },
   "workers-ai:@cf/zai-org/glm-5.3-flash": { input: 0.15, output: 0.5, cached: 0.03, source: "https://developers.cloudflare.com/workers-ai/models/glm-5.3-flash/", verifiedAt: "2026-10-10" },
 });
 

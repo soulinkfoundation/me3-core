@@ -22,7 +22,8 @@ async function rememberedSeller(context: AgentToolContext, profileId: string, of
   const specUrl = typeof offering.agentCheckout?.specUrl === "string" ? offering.agentCheckout.specUrl : null;
   if (!specUrl) return { seller: null, fallbackUrl: pageUrl };
   return { seller: { profileId, name: typeof profile.name === "string" ? profile.name : "Seller", handle: typeof profile.handle === "string" ? profile.handle : null,
-    profileUrl: typeof profile.profileUrl === "string" ? profile.profileUrl : null, specUrl, offeringUrl: typeof offering.url === "string" ? offering.url : null }, fallbackUrl: pageUrl };
+    profileUrl: typeof profile.profileUrl === "string" ? profile.profileUrl : null, specUrl, offeringUrl: typeof offering.url === "string" ? offering.url : null,
+    publicUrl: typeof profile.publicUrl === "string" ? profile.publicUrl : null }, fallbackUrl: pageUrl };
 }
 
 const amountProperty = (description: string) => ({ type: "string", pattern: "^\\d{1,9}(\\.\\d{1,3})?$", description });

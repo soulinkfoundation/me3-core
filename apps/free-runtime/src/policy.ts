@@ -9,6 +9,9 @@ const FREE_API_PREFIXES = [
   "/api/mission-control", "/api/tasks", "/api/journal", "/api/calendar", "/api/home", "/api/account",
   "/api/quotes", "/api/gratitude", "/api/push", "/api/config", "/api/navigation-features",
   "/api/messaging",
+  // People: the contacts list, add, edit, star, import from the phone, last in touch. They live in the
+  // user's own database, so they cost nothing to offer.
+  "/api/contacts",
 ];
 // ME3 messaging over Soulink chat: connect, status, disconnect, the check Soulink makes that a connect
 // came from this ME3, and contacts sync (messaging finds people through it). Invite links, bookings and the
@@ -19,10 +22,10 @@ const NEWS_API_PREFIXES = ["/api/news", "/api/soup"];
 // iCal link, or Google and Outlook connected through ME3 Cloud) are free: they live in the user's own database.
 const BLOCKED_API_PREFIXES = ["/api/assistant/attachments"];
 
-const FREE_EMPTY_LISTS = ["/api/sites", "/api/contacts"];
+const FREE_EMPTY_LISTS = ["/api/sites"];
 
 const FREE_TOOL_PREFIXES = [
-  "core_calendar_", "core_contacts_", "core_conversations_", "core_docs_", "core_journal_", "core_memory_", "core_messages_", "core_mission_",
+  "core_calendar_", "core_cards_", "core_contacts_", "core_conversations_", "core_docs_", "core_journal_", "core_memory_", "core_messages_", "core_mission_",
   "core_owner_", "core_quotes_", "core_reminders_", "core_targets_", "core_tools_",
 ];
 
@@ -35,7 +38,7 @@ export function freeApiAccess(method: string, path: string, options: FreePolicyO
   // The free me3.app page editor (free-page.ts), forwarded to ME3 Cloud.
   if (isFreeAllowancePath(pathname)) return "allow";
   if (/^\/api\/free\/page(?:\/handles\/[^/]+\/available|\/media\/(?:avatar|banner))?$/.test(pathname)) return "allow";
-  // Home reads these two lists on every refresh. A free ME3 has no sites or contacts, so they are empty;
+  // Home reads the site list on every refresh. A free ME3 has no sites, so it is empty;
   // only the bare list is readable, nothing under it and no writes.
   if (FREE_EMPTY_LISTS.includes(pathname)) return method === "GET" ? "allow" : "upgrade";
   if (pathname === "/api/batch") {
@@ -96,24 +99,10 @@ export function freePluginList<T extends { plugins?: { id: string }[] }>(body: T
   return { ...body, plugins: body.plugins.filter((plugin) => allowed.has(plugin.id)) };
 }
 
-type TourBody = { steps?: { id: string; body?: string }[]; progress?: { status: string; stepId: string | null } };
-
-/** The first-run tour for a free user: Home only. Inbox, Accounts, Social and the website builder are paid. */
-export function freeTour<T extends TourBody>(body: T): T {
-  if (!body || !Array.isArray(body.steps)) return body;
-  const steps = body.steps
-    .filter((step) => step.id === "home")
-    .map((step) => ({ ...step, body: step.body?.replace(/\s*Inbox is a good one to start with\./, "") }));
-  const stepId = steps.some((step) => step.id === body.progress?.stepId) ? body.progress!.stepId : null;
-  return { ...body, steps, progress: body.progress ? { ...body.progress, stepId } : body.progress };
-}
-
-export const isTourPath = (path: string) => path === "/api/assistant/tour" || path === "/api/assistant/tour/progress";
-
 /** Added to the agent's system prompt on the free runtime. */
 export const FREE_PLAN_NOTE =
-  "This owner is on the free ME3 plan. It includes this chat, tasks, goals and mission, the journal, the calendar, reminders, and messaging the people they are linked with on Soulink (their contacts). " +
-  "It does not include ME3's own email, a website or pages, bookings, a shop, Accounts, files, social posting, web research or image generation, and you have no tools for those. " +
+  "This owner is on the free ME3 plan. It includes this chat, tasks, goals and mission, the journal, the calendar, reminders, Home cards for habits, counters, goals, tasks and reminders, their contacts (People), and messaging contacts linked on Soulink. " +
+  "It does not include ME3's own email, a website or pages, bookings, a shop, Accounts, cards of bookings, money, invoices or enquiries, files, social posting, web research or image generation, and you have no tools for those. " +
   "If the owner asks for one of them, say in one sentence that it is part of a paid ME3 plan they can upgrade to from the menu, then help with what you can do here. " +
   "Never say you did something you have no tool for.";
 

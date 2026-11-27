@@ -2811,6 +2811,12 @@ onMounted(async () => {
       focusedDayKey.value = dayKeyFormatter.value.format(day);
     }
   }
+  // Home's Connect your calendar opens the connect dialog straight away: /calendar?connect=1.
+  if (new URLSearchParams(window.location.search).has("connect")) {
+    const query = new URLSearchParams(window.location.search); query.delete("connect");
+    window.history.replaceState(window.history.state, "", window.location.pathname + (query.size ? `?${query}` : "") + window.location.hash);
+    openCreateMode("import");
+  }
   const connectParams = new URLSearchParams(window.location.hash.slice(1));
   const connectedFeed = connectParams.get("me3_calendar_feed");
   const connectError = connectParams.get("me3_calendar_error");
@@ -3873,6 +3879,7 @@ onBeforeUnmount(() => {
 
         <form class="booking-form" @submit.prevent="submitImport">
           <div v-if="!soulinkApprovalOrigin" class="calendar-connect">
+            <p class="form-hint">Your events show up in ME3 and stay in sync.</p>
             <Button
               type="button"
               color="outline"
@@ -3889,7 +3896,7 @@ onBeforeUnmount(() => {
             >
               {{ calendarConnecting === 'microsoft' ? 'Opening Outlook…' : 'Connect Outlook' }}
             </Button>
-            <p class="form-hint">Sign in and ME3 keeps a read-only copy in sync. Or add any calendar by link or file:</p>
+            <p class="calendar-connect-or">Or add a calendar by link or file</p>
           </div>
 
           <div v-if="!soulinkApprovalOrigin" class="create-tabs" role="group" aria-label="Calendar sync method">
@@ -3911,18 +3918,8 @@ onBeforeUnmount(() => {
             </button>
           </div>
 
-          <p class="form-hint">
-            <template v-if="soulinkApprovalOrigin">
-              Allow Soulink to add your scheduled calls to this ME3 calendar and update them when plans change. Other ME3 calendar events stay private.
-            </template>
-            <template v-else-if="importForm.mode === 'url'">
-              Paste a Google, Apple, or Outlook `.ics` subscription URL. ME3
-              will keep it as a read-only source and refresh it automatically.
-            </template>
-            <template v-else>
-              Upload an `.ics` export to bring an external calendar into ME3 as
-              a read-only source.
-            </template>
+          <p v-if="soulinkApprovalOrigin" class="form-hint">
+            Allow Soulink to add your scheduled calls to this ME3 calendar and update them when plans change. Other ME3 calendar events stay private.
           </p>
 
           <label>
@@ -4705,6 +4702,13 @@ onBeforeUnmount(() => {
 .calendar-connect {
   display: grid;
   gap: 8px;
+}
+
+.calendar-connect-or {
+  margin: 8px 0 0;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--color-text-muted);
 }
 
 .form-hint {

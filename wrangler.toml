@@ -1,7 +1,9 @@
 name = "my-me3"
 main = "apps/worker/src/index.ts"
 compatibility_date = "2026-06-24"
-compatibility_flags = ["nodejs_compat"]
+# global_fetch_strictly_public: a managed ME3 runs on a *.me3.app Custom Domain, and without this flag its
+# fetch() to another me3.app hostname (ME3 Cloud, calendar feeds) skips Workers and hits the empty origin (522).
+compatibility_flags = ["nodejs_compat", "global_fetch_strictly_public"]
 
 [observability]
 enabled = true
