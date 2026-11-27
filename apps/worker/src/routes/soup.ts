@@ -1,4 +1,4 @@
-import { getNewsFollowList } from "../news-follow";
+import { getNewsFollowList, resolveNewsSources } from "../news-follow";
 import { JournalInputError } from "../journal";
 import { actOnNewsPaper, buildNewsNow, getNewsPaper, getNewsToday } from "../news-paper";
 import { getNewsSettings, updateNewsSettings } from "../news-settings";
@@ -42,6 +42,8 @@ export function registerSoupRoutes(app: AppHono, deps: OwnerRouteDeps) {
   app.patch("/api/news/settings", c => run(c, async () => (await updateNewsSettings(c.env, await owner(c), await body(c))).settings));
   // Soup's curated voices for the owner's topics and feelings, for "Who do you follow?" in setup.
   app.get("/api/news/follow", c => run(c, async () => getNewsFollowList(c.env, await owner(c), { medium: c.req.query("medium") })));
+  // Sources the owner names: Soup finds and checks them and returns ids to follow.
+  app.post("/api/news/follow/resolve", c => run(c, async () => { await owner(c); return resolveNewsSources(c.env, await body(c)); }));
   // Build today's paper now: after setup, when News is added back to Home, and for local testing.
   app.post("/api/news/build", c => run(c, async () => {
     const input = await body(c);

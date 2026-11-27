@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { applyNewsPatch, describeNewsSettings } from "./news-settings";
 import { newsFollowTopics } from "./news-follow";
-import { newsTodayQuery, readNewsToday, readSoupFollow, soupFollowQuery } from "./soup-client";
+import { newsTodayQuery, readNewsToday, readResolvedSources, readSoupFollow, soupFollowQuery } from "./soup-client";
 import { FOLLOWED_LANE, toNewsCandidates } from "./news-paper";
 import { emptySoupTaste, readNewsPrefs } from "./soup-taste";
 
@@ -55,5 +55,21 @@ describe("follows in the paper", () => {
     expect(candidates.mine.map(lane => [lane.topic, lane.stories.map(s => s.id)])).toEqual([[FOLLOWED_LANE, ["f1"]], ["surfing", ["s1"]]]);
     expect(candidates.media.map(s => s.id)).toEqual(["f2", "m1"]);
     expect(readNewsToday({}).followed).toEqual([]);
+  });
+});
+
+describe("naming your own sources", () => {
+  it("keeps only usable answers from Soup, with a reason for the rest", () => {
+    const results = readResolvedSources({ results: [
+      { query: "The Rest Is History", ok: true, id: "src-1a2b3c4d5e6f", name: "The Rest Is History", medium: "listen", feed: "https://feeds/rih", image: "https://img/rih.jpg" },
+      { query: "Old blog", ok: false, reason: "Old blog hasn't published since 2024-01-02." },
+      { query: "Odd", ok: true, id: "Bad Id", name: "Odd", medium: "read" },
+      { ok: true },
+    ] });
+    expect(results).toEqual([
+      { query: "The Rest Is History", ok: true, id: "src-1a2b3c4d5e6f", name: "The Rest Is History", medium: "listen", feed: "https://feeds/rih", image: "https://img/rih.jpg" },
+      { query: "Old blog", ok: false, reason: "Old blog hasn't published since 2024-01-02." },
+      { query: "Odd", ok: false, reason: "Couldn't find that one." },
+    ]);
   });
 });

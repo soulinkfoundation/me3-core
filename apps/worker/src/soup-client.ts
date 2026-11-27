@@ -253,7 +253,29 @@ export type SoupClient = {
   newsToday(request: NewsTodayRequest, signal?: AbortSignal): Promise<NewsToday>;
   /** Soup's curated "who to follow" for topic words and feelings. Throws SoupUnavailableError (404) on an older Soup. */
   follow(request: SoupFollowRequest, signal?: AbortSignal): Promise<SoupFollowSuggestion[]>;
+  /** Finds and checks sources the owner names (names, @handles, links). Throws SoupUnavailableError (404) on an older Soup. */
+  resolveSources(queries: string[], signal?: AbortSignal): Promise<SoupResolvedSource[]>;
 };
+
+/** A source the owner named, as Soup found it. `id` goes in news follows. */
+export type SoupResolvedSource = { query: string; ok: boolean; id?: string; name?: string; medium?: "read" | "listen" | "watch"; feed?: string; image?: string; reason?: string };
+
+export function readResolvedSources(data: unknown): SoupResolvedSource[] {
+  const rows = data && typeof data === "object" && Array.isArray((data as { results?: unknown }).results) ? (data as { results: unknown[] }).results : [];
+  return rows.flatMap(entry => {
+    const row = (entry && typeof entry === "object" ? entry : {}) as Record<string, unknown>;
+    const text = (value: unknown, max = 300) => typeof value === "string" ? value.trim().slice(0, max) : "";
+    if (!text(row.query)) return [];
+    const medium = row.medium === "read" || row.medium === "listen" || row.medium === "watch" ? row.medium : undefined;
+    const id = /^[a-z0-9][a-z0-9-]{0,79}$/.test(text(row.id)) ? text(row.id) : "";
+    const ok = row.ok === true && !!id && !!medium && !!text(row.name);
+    return [{
+      query: text(row.query), ok,
+      ...(ok ? { id, name: text(row.name, 80), medium, feed: text(row.feed, 500) } : { reason: text(row.reason, 200) || "Couldn't find that one." }),
+      ...(ok && /^https:\/\//.test(text(row.image, 500)) ? { image: text(row.image, 500) } : {}),
+    }];
+  });
+}
 
 /** GET /v1/follow: topic words and feelings only, never the person. */
 export type SoupFollowRequest = { topics: string[]; feelings: string[]; country?: string | null; medium?: "read" | "listen" | "watch"; limit?: number };
@@ -341,6 +363,16 @@ export function createSoupClient(options: { origin?: string | null; fetch?: Fetc
         if (!items.length && bowls.every(result => result.status === "rejected")) throw error;
         return { items, fallback: true, contractVersion: null };
       }
+    },
+    async resolveSources(queries, signal) {
+      let response: Response;
+      try { response = await fetchImpl(`${origin}/v1/news/sources/resolve`, { method: "POST", headers: { ...headers, "Content-Type": "application/json" }, body: JSON.stringify({ queries: queries.slice(0, 30) }), signal }); }
+      catch (error) { throw new SoupUnavailableError(`The Human Soup could not be reached: ${error instanceof Error ? error.message : String(error)}`); }
+      if (!response.ok) {
+        const message = await response.json().then((body: unknown) => (body as { error?: string } | null)?.error).catch(() => undefined);
+        throw new SoupUnavailableError(message || `The Human Soup answered ${response.status} for /v1/news/sources/resolve`, response.status);
+      }
+      return readResolvedSources(await response.json());
     },
     async follow(request, signal) {
       return readSoupFollow(await getJson<unknown>(`/v1/follow?${soupFollowQuery(request)}`, signal));
