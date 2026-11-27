@@ -11073,6 +11073,24 @@ describe("ME3 Worker auth", () => {
     expect(unknownApp.status).toBe(404);
   });
 
+  it("sends Connect YouTube for News back to the app without an ME3 session (me3-6ptk.11)", async () => {
+    const env = createEnv();
+    const state = "s".repeat(32);
+    const page = await coreApp.fetch(
+      new Request(`http://localhost/api/news-connect/youtube/callback/ios?state=${state}&handoff=nyh_abc12345`),
+      env,
+    );
+    expect(page.status).toBe(200);
+    expect(await page.text()).toContain(`me3mobile://news?youtube_state=${state}&youtube_handoff=nyh_abc12345`);
+    const unknownApp = await coreApp.fetch(new Request("http://localhost/api/news-connect/youtube/callback/evil"), env);
+    expect(unknownApp.status).toBe(404);
+    const collect = await coreApp.fetch(
+      new Request("http://localhost/api/news/follow/youtube/collect", { method: "POST", body: JSON.stringify({ state, handoff: "nyh_abc12345" }) }),
+      env,
+    );
+    expect(collect.status).toBe(401);
+  });
+
   it("keeps a YouTube channel's long-upload status from the hosted handoff (me3-8l29)", async () => {
     const env = createEnv();
     env.ME3_SOCIAL_OAUTH_ORIGIN = "https://social-oauth.example";
