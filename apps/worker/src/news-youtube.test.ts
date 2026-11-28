@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { collectNewsYouTube, newsYouTubeDeepLink, newsYouTubeReturnPage, readChannels, startNewsYouTube } from "./news-youtube";
+import { collectNewsYouTube, newsYouTubeDeepLink, newsYouTubeReturnPage, newsYouTubeWebResult, readChannels, startNewsYouTube } from "./news-youtube";
 import type { Env } from "./types";
 
 const CLOUD = "https://cloud.example";
@@ -17,7 +17,7 @@ describe("Connect YouTube for News", () => {
   });
 
   it("says plainly when the app isn't named or there is no ME3 Cloud", async () => {
-    await expect(startNewsYouTube(env, "https://core.example/x", { app: "web" })).rejects.toThrow("works from the ME3 app");
+    await expect(startNewsYouTube(env, "https://core.example/x", { app: "desktop" })).rejects.toThrow("works from ME3");
     const selfHosted = { CORE_API_ORIGIN: "https://core.example" } as unknown as Env;
     await expect(startNewsYouTube(selfHosted, "https://core.example/x", { app: "ios" })).rejects.toThrow("needs ME3 Cloud");
   });
@@ -27,8 +27,24 @@ describe("Connect YouTube for News", () => {
     expect(newsYouTubeDeepLink("android", { state: STATE, error: "youtube_no_subscriptions" })).toBe(`me3android://news?youtube_error=youtube_no_subscriptions&youtube_state=${STATE}`);
     expect(newsYouTubeDeepLink("ios", { state: "<script>", handoff: "nyh_abc12345" })).toBe("me3mobile://news?youtube_error=failed");
     expect(newsYouTubeDeepLink("ios", { state: STATE, handoff: "javascript:x" })).toBe(`me3mobile://news?youtube_error=failed&youtube_state=${STATE}`);
-    expect(newsYouTubeReturnPage("web", {})).toBeNull();
+    expect(newsYouTubeReturnPage("desktop", {})).toBeNull();
     expect(newsYouTubeReturnPage("ios", { state: STATE, handoff: "nyh_abc12345" })).toContain("me3mobile://news?youtube_state=");
+  });
+
+  it("sends the web sign-in back to Core's own web callback", async () => {
+    const { url } = await startNewsYouTube(env, "https://core.example/api/news/follow/youtube/start", { app: "web" });
+    expect(new URL(url).searchParams.get("core_callback")).toBe("https://core.example/api/news-connect/youtube/callback/web");
+  });
+
+  it("hands the web setup window only checked tokens, on its own origin", () => {
+    expect(newsYouTubeWebResult({ state: STATE, handoff: "nyh_abc12345" })).toEqual({ state: STATE, handoff: "nyh_abc12345" });
+    expect(newsYouTubeWebResult({ state: STATE, handoff: "</script>" })).toEqual({ state: STATE, error: "failed" });
+    expect(newsYouTubeWebResult({ state: "<b>", error: "access_denied" })).toEqual({ state: "", error: "access_denied" });
+    const page = newsYouTubeReturnPage("web", { state: STATE, handoff: "nyh_abc12345", error: "<script>" })!;
+    expect(page).toContain(`"handoff":"nyh_abc12345"`);
+    expect(page).toContain("window.location.origin");
+    expect(page).not.toContain("<script>alert");
+    expect(page).not.toContain("me3mobile://");
   });
 
   it("collects the channel list from ME3 Cloud once", async () => {

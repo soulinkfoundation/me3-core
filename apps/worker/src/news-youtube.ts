@@ -25,9 +25,14 @@ function randomState(): string {
 }
 
 /** POST /api/news/follow/youtube/start {app}: where to send the owner, and the state to check on return. */
+export type NewsYouTubeApp = StripeReturnApp | "web";
+const readApp = (value: unknown): NewsYouTubeApp | null => value === "web" ? "web" : parseStripeReturnApp(value);
+/** What the web return page posts to the setup window that opened it. */
+export const NEWS_YOUTUBE_MESSAGE = "me3-news-youtube";
+
 export async function startNewsYouTube(env: Env, requestUrl: string, input: unknown): Promise<{ url: string; state: string }> {
-  const app = parseStripeReturnApp((input as { app?: unknown } | null)?.app);
-  if (!app) throw new JournalInputError("Connect YouTube works from the ME3 app.");
+  const app = readApp((input as { app?: unknown } | null)?.app);
+  if (!app) throw new JournalInputError("Connect YouTube works from ME3 on the web or in the app.");
   const origin = await resolveHostedSocialOAuthOrigin(env);
   if (!origin) throw new JournalInputError("Connect YouTube needs ME3 Cloud. Add a channel by name or link instead.", 409);
   const state = randomState();
@@ -48,10 +53,50 @@ export function newsYouTubeDeepLink(app: StripeReturnApp, query: { state?: strin
   return `${base}?youtube_error=${error}${state ? `&youtube_state=${state}` : ""}`;
 }
 
+/** Only checked tokens or a short error code, for the web setup window. */
+export function newsYouTubeWebResult(query: { state?: string | null; handoff?: string | null; error?: string | null }): { state: string; handoff?: string; error?: string } {
+  const state = query.state && STATE.test(query.state) ? query.state : "";
+  if (state && query.handoff && HANDOFF.test(query.handoff)) return { state, handoff: query.handoff };
+  return { state, error: query.error && /^[a-z0-9_]{1,40}$/.test(query.error) ? query.error : "failed" };
+}
+
+/**
+ * The web sign-in runs in a pop-up. Its return page, on Core's own origin like the web app, hands the
+ * result to the setup window (same origin only) and closes.
+ */
+function webReturnPage(result: ReturnType<typeof newsYouTubeWebResult>): string {
+  // The result holds only checked tokens and a short code, so JSON is safe to inline.
+  const message = JSON.stringify({ type: NEWS_YOUTUBE_MESSAGE, ...result }).replace(/</g, "\\u003c");
+  return `<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex">
+<title>Back to ME3</title>
+<style>:root { color-scheme: light dark; } body { margin: 0; min-height: 100vh; display: grid; place-items: center; font: 16px/1.5 -apple-system, system-ui, sans-serif; background: Canvas; color: CanvasText; } main { padding: 24px; text-align: center; max-width: 360px; }</style>
+</head>
+<body>
+<main><p>YouTube is done. You can close this window and go back to ME3.</p></main>
+<script>
+(function () {
+  var message = ${message};
+  // Google's sign-in pages can cut the pop-up off from its opener, so the result also goes out on a
+  // same-origin channel the setup window listens on.
+  try { new BroadcastChannel(message.type).postMessage(message); } catch (e) {}
+  try { if (window.opener && !window.opener.closed) window.opener.postMessage(message, window.location.origin); } catch (e) {}
+  setTimeout(function () { window.close(); }, 150);
+})();
+</script>
+</body>
+</html>`;
+}
+
 /** GET /api/news-connect/youtube/callback/:app: public, closes the sign-in sheet and goes back to the app. */
 export function newsYouTubeReturnPage(app: unknown, query: { state?: string | null; handoff?: string | null; error?: string | null }): string | null {
-  const target = parseStripeReturnApp(app);
+  const target = readApp(app);
   if (!target) return null;
+  if (target === "web") return webReturnPage(newsYouTubeWebResult(query));
   return stripeAppReturnPage(newsYouTubeDeepLink(target, query), "Taking you back to ME3.");
 }
 

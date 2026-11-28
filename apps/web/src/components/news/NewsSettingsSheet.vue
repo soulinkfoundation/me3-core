@@ -1,18 +1,34 @@
 <script setup lang="ts">
-import { watch } from "vue";
+import { ref, watch } from "vue";
 import AppDialog from "../AppDialog.vue";
 import UiIcon from "../UiIcon.vue";
+import NewsFollow from "./NewsFollow.vue";
 import NewsTopics from "./NewsTopics.vue";
+import { useNewsFollow } from "../../composables/useNewsFollow";
 import { useNewsSettings } from "../../composables/useNewsSettings";
 import { NEWS_TIME_CHOICES } from "../../utils/news";
+import { readFollowPicks } from "../../utils/news-follow";
 
-// News settings (me3-6ptk.2): topics, a time and whether to be told. No source picker.
+// News settings (me3-6ptk.2): topics, the voices the owner follows, a time and whether to be told.
 const props = defineProps<{ open: boolean }>();
 const emit = defineEmits<{ close: []; changed: [] }>();
 const { settings, load, patch, toggle, addTopic } = useNewsSettings();
 watch(() => props.open, open => { if (open) void load(); }, { immediate: true });
 const changed = async (work: Promise<boolean> | undefined) => { if (await work) emit("changed"); };
 function timeChoices(current: string) { return [...new Set([...NEWS_TIME_CHOICES, current])].sort(); }
+// Voices open on request; each change is saved shortly after the owner stops tapping.
+const voicesOpen = ref(false);
+const follow = useNewsFollow();
+let saveTimer: number | undefined;
+function openVoices() { voicesOpen.value = !voicesOpen.value; if (voicesOpen.value) void follow.load(readFollowPicks(settings.value?.follows)); }
+const ids = (list: Array<{ id: string }> | undefined) => (list || []).map(entry => entry.id).join(",");
+watch(follow.follows, follows => {
+  // Loading the list isn't a change; saving the same voices would mark the order as changed.
+  if (!voicesOpen.value || ids(follows) === ids(settings.value?.follows)) return;
+  window.clearTimeout(saveTimer);
+  saveTimer = window.setTimeout(() => void changed(patch({ follows }, { follows })), 700);
+});
+watch(() => props.open, open => { if (!open) voicesOpen.value = false; });
 </script>
 
 <template>
@@ -22,6 +38,14 @@ function timeChoices(current: string) { return [...new Set([...NEWS_TIME_CHOICES
       <template v-if="settings">
         <div class="news-settings__list news-settings__list--topics">
           <NewsTopics :settings="settings" work-hint="from your projects" @toggle="(group, word) => changed(toggle(group, word))" @add="(group, label) => changed(addTopic(group, label))" />
+        </div>
+        <div class="news-settings__list">
+          <button type="button" class="news-settings__row news-settings__row--button" :aria-expanded="voicesOpen" @click="openVoices">
+            <UiIcon name="Users" :size="18" />
+            <span class="news-settings__text"><span>Voices you follow</span><span class="news-settings__sub">{{ (settings.follows?.length || 0) === 1 ? '1 voice' : `${settings.follows?.length || 0} voices` }}, reached for first</span></span>
+            <UiIcon :name="voicesOpen ? 'ChevronUp' : 'ChevronDown'" :size="16" />
+          </button>
+          <div v-if="voicesOpen" class="news-settings__voices"><NewsFollow :state="follow" /></div>
         </div>
         <div class="news-settings__list">
           <label class="news-settings__row">
@@ -52,6 +76,8 @@ function timeChoices(current: string) { return [...new Set([...NEWS_TIME_CHOICES
 .news-settings__list--topics { padding: 0 16px; }
 .news-settings__row { display: flex; align-items: center; gap: 12px; padding: 12px 16px; box-shadow: inset 0 -1px 0 var(--ui-border); }
 .news-settings__row:last-child { box-shadow: none; }
+.news-settings__row--button { width: 100%; min-height: 0; border: 0; background: none; color: var(--ui-text); font: inherit; text-align: left; cursor: pointer; }
+.news-settings__voices { padding: 0 16px 4px; }
 .news-settings__text { display: flex; flex-direction: column; flex: 1; min-width: 0; font-size: 15px; }
 .news-settings__sub { font-size: 13px; color: var(--ui-text-muted); }
 .news-settings__row select { padding: 6px 8px; border: 0; border-radius: 10px; background: var(--ui-surface-muted); color: var(--ui-text); font: inherit; font-size: 14px; }

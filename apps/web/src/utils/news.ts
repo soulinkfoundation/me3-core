@@ -1,3 +1,4 @@
+import type { NewsFollowPick } from "./news-follow";
 // News on web (me3-6ptk.5): the shapes the worker sends for the owner's morning paper and its
 // settings, and the small helpers the Home card, the reader and the setup chat share.
 export const NEWS_SETTINGS_TOOL = "core_news_settings_update";
@@ -58,6 +59,8 @@ export type NewsSettings = {
   time: string;
   weekendOffsetMinutes: number;
   notify: boolean;
+  /** Voices the owner follows (me3-6ptk.10). Older installs leave it out. */
+  follows?: NewsFollowPick[];
 };
 export type NewsPaperAction = "read" | "hide" | "unhide" | "rate";
 
