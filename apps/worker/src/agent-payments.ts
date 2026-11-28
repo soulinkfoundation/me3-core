@@ -77,8 +77,11 @@ export const PAYMENT_PROPOSE_NETWORK_TOOL = "core_payments_propose_network";
 export function isPaymentApprovalTool(toolName: string): boolean {
   return toolName === PAYMENT_PROPOSE_TOOL || toolName === PAYMENT_PROPOSE_NETWORK_TOOL;
 }
-/** A web approval must come from a session signed in within this window. */
-export const PAYMENT_FRESH_SIGN_IN_SECONDS = 10 * 60;
+/**
+ * A web approval must come from a session signed in within this window: once a day,
+ * not per payment. Limits still cap spend, and the seller's checkout takes the card.
+ */
+export const PAYMENT_FRESH_SIGN_IN_SECONDS = 24 * 60 * 60;
 /** Defaults in whole currency units when the owner has not set limits. */
 export const DEFAULT_PAYMENT_LIMITS = { perPayment: 250, monthly: 1000 } as const;
 const MONTH_MS = 30 * 24 * 60 * 60 * 1000;

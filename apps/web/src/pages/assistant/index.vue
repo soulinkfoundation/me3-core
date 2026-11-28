@@ -617,8 +617,13 @@ function isFirstAllowanceNotice(index: number): boolean {
     .some((message) => message.allowanceNotice?.resetsOn === resetsOn);
 }
 
+/** The agent's placeholder while a card waits for approval (packages/agent/src/loop.ts). */
+const APPROVAL_PLACEHOLDER = "This action needs your approval before I can continue.";
+// Once decided, the card is gone and the placeholder would stand alone, so only the latest one shows.
 const assistantConsoleMessages = computed(() =>
-  chatMessages.value.filter((message) => message.id !== "assistant-ready"),
+  chatMessages.value.filter((message, index, all) =>
+    message.id !== "assistant-ready" &&
+    !(message.role === "assistant" && message.text?.trim() === APPROVAL_PLACEHOLDER && index < all.length - 1)),
 );
 
 // People's Soulink conversations, as on the phones: placed in the thread by time; on an empty chat only what waits.

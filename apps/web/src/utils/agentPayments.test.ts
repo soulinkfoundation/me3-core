@@ -15,6 +15,7 @@ import {
   paymentStatusLabel,
   paymentTimestamp,
   type PaymentRecord,
+  paymentHoldExpired,
 } from "./agentPayments";
 
 const card = {
@@ -176,7 +177,7 @@ describe("network purchases (another ME3 site)", () => {
     seller: { name: "Aoife", handle: "aoife", profileId: "cloud-aoife" }, offering: { id: "service:coaching", kind: "booking", title: "Coaching session" },
     slot: { start: "2026-10-22T09:00:00.000Z", end: "2026-10-22T10:00:00.000Z", timezone: "Europe/Dublin" }, quantity: 1,
     sharesWith: { name: "Sam Buyer", email: "sam@example.com" }, checkoutStatus: "pending",
-    payUrl: "https://aoife.example/api/agent-commerce/v1/sites/aoife/checkouts/c1/pay", expiresAt: "2026-10-18T10:15:00.000Z",
+    payUrl: "https://aoife.example/api/agent-commerce/v1/sites/aoife/checkouts/c1/pay", expiresAt: "2099-10-18T10:15:00.000Z",
     livePrice: null, reference: null, calendarEventId: null, ...overrides,
   });
 
@@ -194,6 +195,21 @@ describe("network purchases (another ME3 site)", () => {
     expect(paymentHandOver(payment({ network: network() }))).toMatchObject({ openUrl: "https://aoife.example/api/agent-commerce/v1/sites/aoife/checkouts/c1/pay", instructions: expect.stringMatching(/Aoife's secure checkout.*ME3 does not charge you/) });
     expect(paymentHandOver(payment({ network: network({ checkoutStatus: "expired", payUrl: null }) }))).toBeNull();
     expect(paymentHandOver(payment({ network: network({ payUrl: "http://aoife.example/pay" }) }))).toBeNull();
+  });
+
+  it("treats a hold past its time as expired before the background check catches up", () => {
+    const lapsed = payment({ network: network({ expiresAt: "2020-01-01T10:15:00.000Z" }) });
+    expect(paymentHoldExpired(lapsed)).toBe(true);
+    expect(paymentHandOver(lapsed)).toBeNull();
+    expect(paymentNetworkNote(lapsed)).toBe("Hold expired · nothing bought");
+    expect(paymentHoldExpired(payment({ network: network() }))).toBe(false);
+  });
+
+  it("shows the limit up front only when this payment leaves under a quarter of it", () => {
+    const view = (remaining: string) => paymentApprovalView({ id: "a9", status: "pending", payload: { ...card, amount: "50.00", currency: "USD", limits: { remaining, monthlyMax: "1000.00", currency: "USD" } } })!;
+    expect(view("1000.00").limitLow).toBe(false);
+    expect(view("260.00").limitLow).toBe(true);
+    expect(view("1000.00").remainingLimit).toMatch(/left of your/);
   });
 
   it("says what happened at the seller", () => {

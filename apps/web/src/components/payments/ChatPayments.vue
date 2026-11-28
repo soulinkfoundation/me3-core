@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, nextTick, ref, watch } from "vue";
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from "vue";
 import { useRoute, useRouter } from "vue-router";
 import { api } from "../../api";
 import Button from "../Button.vue";
@@ -7,7 +7,7 @@ import UiIcon from "../UiIcon.vue";
 import PaymentApprovalCard from "./PaymentApprovalCard.vue";
 import PaymentReceiptDialog from "./PaymentReceiptDialog.vue";
 import {
-  formatPaymentMoney, isFreshAuthenticationRequired, paymentApprovalView, paymentHandOver, paymentNetworkNote, paymentReauthLocation, paymentReceiptWarning, paymentStalledHandOver, paymentTimestamp,
+  formatPaymentMoney, isFreshAuthenticationRequired, paymentHoldExpired, paymentApprovalView, paymentHandOver, paymentNetworkNote, paymentReauthLocation, paymentReceiptWarning, paymentStalledHandOver, paymentTimestamp,
   type PaymentApprovalLike, type PaymentRecord,
 } from "../../utils/agentPayments";
 
@@ -96,11 +96,36 @@ async function checkSeller(payment: PaymentRecord) {
 function pill(payment: PaymentRecord) {
   const total = formatPaymentMoney(payment.amount, payment.currency);
   const note = paymentNetworkNote(payment);
-  if (payment.network && payment.status === "not_paid" && note) return `${payment.merchant.name}: ${note}`;
+  if (payment.network && payment.status !== "paid" && payment.status !== "declined" && note) return `${payment.merchant.name}: ${note}`;
   if (payment.status === "paid") return `Paid ${payment.receipt ? formatPaymentMoney(payment.receipt.amount, payment.receipt.currency) : total} to ${payment.merchant.name}`;
   if (payment.status === "declined") return `Declined ${total} to ${payment.merchant.name}`;
   return `Didn't buy from ${payment.merchant.name}`;
 }
+
+const now = ref(Date.now());
+/** A held checkout the owner may be paying right now in another tab. */
+const awaitingPayment = computed(() => payments.value.filter(payment => payment.status === "handed_over" && payment.network?.checkoutStatus === "pending" && !paymentHoldExpired(payment)));
+const payable = (payment: PaymentRecord) => payment.status === "handed_over" && !paymentHoldExpired(payment, now.value);
+
+/**
+ * Paying happens in another tab, so ask the seller as soon as the owner comes back, and every
+ * 20 seconds while Chat is open and a hold is live. The seller checks with its payment provider.
+ */
+function checkAwaiting() {
+  if (document.visibilityState !== "visible") return;
+  for (const payment of awaitingPayment.value) void checkSeller(payment);
+}
+let timer: ReturnType<typeof setInterval> | undefined;
+onMounted(() => {
+  window.addEventListener("focus", checkAwaiting);
+  document.addEventListener("visibilitychange", checkAwaiting);
+  timer = setInterval(() => { now.value = Date.now(); if (awaitingPayment.value.length) checkAwaiting(); }, 20_000);
+});
+onBeforeUnmount(() => {
+  window.removeEventListener("focus", checkAwaiting);
+  document.removeEventListener("visibilitychange", checkAwaiting);
+  if (timer) clearInterval(timer);
+});
 
 watch(() => [props.threadId, props.refreshKey], load, { immediate: true });
 </script>
@@ -124,9 +149,9 @@ watch(() => [props.threadId, props.refreshKey], load, { immediate: true });
       </div>
     </section>
     <template v-for="payment in recent" :key="payment.id">
-      <section v-if="payment.status === 'handed_over'" class="chat-payments__handover" :aria-label="`Pay ${payment.merchant.name}`">
-        <div class="chat-payments__head"><span aria-hidden="true">💳</span><span><strong>Pay {{ formatPaymentMoney(payment.amount, payment.currency) }} to {{ payment.merchant.name }}</strong><small>{{ payment.network ? `Approved · ${paymentNetworkNote(payment) ?? 'on the ME3 network'}` : 'Approved · waiting for your receipt' }}</small></span></div>
-        <p>{{ paymentHandOver(payment)?.instructions ?? (payment.network ? 'ME3 is checking with the seller.' : '') }}</p>
+      <section v-if="payable(payment)" class="chat-payments__handover" :aria-label="`Pay ${payment.merchant.name}`">
+        <div class="chat-payments__head"><span aria-hidden="true">💳</span><span><strong>Pay {{ formatPaymentMoney(payment.amount, payment.currency) }} to {{ payment.merchant.name }}</strong><small>{{ [payment.items.map(item => item.options ? `${item.name} · ${item.options}` : item.name).join(", "), payment.network ? paymentNetworkNote(payment) : "waiting for your receipt"].filter(Boolean).join(" · ") }}</small></span></div>
+        <p v-if="!paymentHandOver(payment) && payment.network">ME3 is checking with the seller.</p>
         <div class="chat-payments__btns">
           <Button v-if="payment.network" color="ghost" shape="soft" :disabled="checking[payment.id]" @click="checkSeller(payment)">{{ checking[payment.id] ? 'Checking…' : "I've paid" }}</Button>
           <Button v-else color="ghost" shape="soft" @click="receiptFor = payment.id">Receipt</Button>

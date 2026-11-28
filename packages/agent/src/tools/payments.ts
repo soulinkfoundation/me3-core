@@ -83,7 +83,7 @@ export function paymentTools(): AgentTool[] {
       const approved = context.approvalData;
       if (approved?.proposalId !== proposal.id || approved?.proposalHash !== proposal.proposalHash) throw new Error("This approval does not match the reviewed payment proposal.");
       const result = await payments.handOver(proposal.id, proposal.proposalHash);
-      return ok({ ...result, next: "Give the owner the openUrl and instructions. Do not say the payment is complete: the owner pays on their own device. Later, record the receipt from the merchant's order email or ask the owner to confirm." });
+      return ok({ ...result, next: "Chat already shows a Pay card with the checkout button, so do not paste the openUrl. In one or two sentences say it is ready to pay in the card. Do not say the payment is complete: the owner pays on their own device. Later, record the receipt from the merchant's order email or ask the owner to confirm." });
     },
   });
 

@@ -16,6 +16,18 @@ const offer = (title: string, amount?: string, currency = "EUR", durationMinutes
 });
 
 describe("peopleRows card lines", () => {
+  it("lists the first few offerings by name and price, each linking to its own page when it has one", () => {
+    const [row] = peopleRows({ results: [person({ offerings: [
+      { ...offer("Samples for sale", "1.00", "USD", null), url: "https://niamh.me3.app/shop/samples" },
+      offer("30-min Session", "50", "USD", 30), offer("Intro", undefined, "EUR", 20), offer("Fourth", "5"),
+    ] })] });
+    expect(row.offerings).toEqual([
+      { key: "service:Samples for sale", title: "Samples for sale", price: "$1", url: "https://niamh.me3.app/shop/samples" },
+      { key: "service:30-min Session", title: "30-min Session", price: "$50", url: "https://niamh.me3.app" },
+      { key: "service:Intro", title: "Intro", price: "Free", url: "https://niamh.me3.app" },
+    ]);
+  });
+
   it("shows the town, not the full location label", () => {
     const [row] = peopleRows({ results: [person({ location: { label: "Galway, Ireland", locality: "Galway" } })] });
     expect(row.place).toBe("Galway");

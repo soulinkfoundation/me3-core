@@ -112,7 +112,8 @@ describe("payment approval and hand-over", () => {
   it("requires a recent web sign-in or a device unlock", () => {
     const now = 1_800_000_000;
     expect(paymentApprovalAuth({ channel: "web", sessionIssuedAt: now - 60 }, now)).toMatchObject({ channel: "web" });
-    expect(() => paymentApprovalAuth({ channel: "web", sessionIssuedAt: now - 3600 }, now)).toThrow(/Sign in again/);
+    expect(paymentApprovalAuth({ channel: "web", sessionIssuedAt: now - 12 * 3600 }, now)).toMatchObject({ channel: "web" });
+    expect(() => paymentApprovalAuth({ channel: "web", sessionIssuedAt: now - 25 * 3600 }, now)).toThrow(/Sign in again/);
     expect(() => paymentApprovalAuth({ channel: "web", sessionIssuedAt: null }, now)).toThrow(/Sign in again/);
     expect(paymentApprovalAuth({ channel: "mobile", deviceAuthentication: "biometric" }, now)).toEqual({ channel: "mobile", deviceAuthentication: "biometric" });
     expect(() => paymentApprovalAuth({ channel: "mobile" }, now)).toThrow(/Face ID/);
@@ -220,7 +221,7 @@ describe("payment routes", () => {
   it("refuses a stale web session and does not resume the agent", async () => {
     const { env, db } = fixture();
     const id = await pendingApproval(env, db as never);
-    const stale = app(env, Math.floor(Date.now() / 1000) - 3600);
+    const stale = app(env, Math.floor(Date.now() / 1000) - 25 * 3600);
     const response = await stale.request(`/api/assistant/approvals/${id}`, { decision: "approved" });
     expect(response.status).toBe(403);
     expect(await response.json()).toMatchObject({ code: "fresh_authentication_required" });

@@ -101,14 +101,16 @@ test("Chat shows the whole proposal, escapes merchant text and declines in one c
   await page.goto("/assistant?view=chat&thread=main");
   const cardEl = page.getByTestId("payment-approval");
   await expect(cardEl).toContainText(hostile);
-  await expect(cardEl).toContainText("1 × Table for four · Fri 19:30");
+  await expect(cardEl).toContainText("Table for four · Fri 19:30");
   await expect(cardEl).toContainText("2 × Gift card");
-  await expect(cardEl).toContainText("20.00 EUR");
+  await expect(cardEl).toContainText("€20.00");
   await expect(cardEl).toContainText("Friday dinner deposit");
   await expect(cardEl).toContainText("Refundable until Thursday 18:00");
   await expect(cardEl).toContainText("left of your");
   await expect(cardEl).toContainText("You pay on your own device. ME3 does not charge you and never sees your card details.");
   await expect(cardEl.getByRole("alert")).toContainText("The checkout link opens pay.other.example, not bramble.example.");
+  // Refunds, the checkout link and the limit sit behind Details.
+  await cardEl.getByText("Details", { exact: true }).click();
   await expect(cardEl.getByRole("link", { name: "https://pay.other.example/c/1" })).toHaveAttribute("href", "https://pay.other.example/c/1");
   await expect(cardEl.locator("img")).toHaveCount(0);
   expect(await page.evaluate(() => (window as { __xss?: number }).__xss)).toBeUndefined();
@@ -124,7 +126,7 @@ test("A stale session signs in again, then the owner approves and gets the hand-
   await page.goto("/assistant?view=chat&thread=main");
   const cardEl = page.getByTestId("payment-approval");
   await cardEl.getByRole("button", { name: /^Approve/ }).click();
-  await expect(cardEl).toContainText("sign in again before approving a payment");
+  await expect(cardEl).toContainText("Sign in again to approve payments. It's needed once a day");
   // One refused attempt, no silent retry.
   await page.waitForTimeout(300); expect(state.decisions).toEqual([{ decision: "approved" }]);
 
@@ -144,8 +146,7 @@ test("A stale session signs in again, then the owner approves and gets the hand-
   await expect.poll(() => state.decisions).toEqual([{ decision: "approved" }, { decision: "approved" }]);
 
   const handOver = page.getByRole("region", { name: /^Pay / });
-  await expect(handOver).toContainText("Open the checkout link on your own device and pay");
-  await expect(handOver).toContainText("ME3 does not charge you.");
+  await expect(handOver).toContainText("Pay €20.00 to Bramble");
   await expect(handOver).not.toContainText(/payment (is )?complete|you paid/i);
   await expect(handOver.getByRole("link", { name: "Open checkout" })).toHaveAttribute("href", "https://pay.other.example/c/1");
   await expect(page).not.toHaveURL(/payment=/);
@@ -268,7 +269,8 @@ test("A purchase from another ME3 site says what is shared, hands over the selle
   await cardEl.getByRole("button", { name: /^Approve/ }).click();
   await expect.poll(() => state.decisions).toEqual([{ decision: "approved" }]);
   const handOver = page.getByRole("region", { name: /^Pay / });
-  await expect(handOver).toContainText("Open Aoife's secure checkout on your own device and pay €60.00.");
+  await expect(handOver).toContainText("Pay €60.00 to Aoife");
+  await expect(handOver).toContainText("Coaching session");
   await expect(handOver.getByRole("link", { name: "Open checkout" })).toHaveAttribute("href", SELLER_PAY_URL);
   await expect(handOver).not.toContainText(/payment (is )?complete|you paid/i);
 

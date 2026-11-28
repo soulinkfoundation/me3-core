@@ -43,7 +43,10 @@ export type PaymentApprovalView = {
   items: Array<{ name: string; quantity: number; options: string | null }>;
   amount: string; currency: string; total: string; refundPolicy: string | null;
   checkoutHref: string | null; checkoutHost: string | null; checkoutWarning: string | null;
-  remainingLimit: string | null; howItWorks: string;
+  remainingLimit: string | null;
+  /** True when this payment leaves under a quarter of the 30-day limit, so the limit is worth showing up front. */
+  limitLow: boolean;
+  howItWorks: string;
   /** Present for purchases from another ME3 site. */
   network: { sellerName: string; slotLabel: string | null; sharesNotice: string; sharesWith: string | null } | null;
 };
@@ -61,7 +64,8 @@ const host = (url: URL | null) => url ? url.hostname.replace(/^www\./, "") : nul
 export function formatPaymentMoney(amount: string | number, currency: string): string {
   const value = Number(amount);
   if (!Number.isFinite(value)) return `${amount} ${currency}`;
-  try { return new Intl.NumberFormat(undefined, { style: "currency", currency }).format(value); }
+  // One format everywhere ("$50.00", "€12.00"), so a card, its rows and Chat never disagree.
+  try { return new Intl.NumberFormat(undefined, { style: "currency", currency, currencyDisplay: "narrowSymbol" }).format(value); }
   catch { return `${amount} ${currency}`; }
 }
 
@@ -92,6 +96,7 @@ export function paymentApprovalView(approval: PaymentApprovalLike): PaymentAppro
       ? `The checkout link opens ${checkoutHost ?? "another site"}, not ${merchantHost ?? "the merchant's site"}. Check it is the merchant's payment page before you pay.`
       : null,
     remainingLimit: remaining && monthly ? `${formatPaymentMoney(remaining, limitCurrency)} left of your ${formatPaymentMoney(monthly, limitCurrency)} 30-day limit` : null,
+    limitLow: Boolean(remaining && monthly && limitCurrency === currency && Number(remaining) - Number(amount) < Number(monthly) / 4),
     // The line is fixed product copy, so it shows even if a card omits it.
     howItWorks: network ? NETWORK_PAYMENT_HOW_IT_WORKS : PAYMENT_HOW_IT_WORKS,
     network: network ? {
@@ -119,7 +124,7 @@ export function paymentHandOver(payment: PaymentRecord): { openUrl: string; inst
   if (payment.status !== "handed_over") return null;
   if (payment.network) {
     const payUrl = payment.network.checkoutStatus === "pending" ? safeHttpsUrl(payment.network.payUrl) : null;
-    if (!payUrl) return null;
+    if (!payUrl || paymentHoldExpired(payment)) return null;
     const until = payment.network.expiresAt ? paymentTime(payment.network.expiresAt) : "";
     return { openUrl: payUrl.toString(), instructions: `Open ${payment.network.seller.name}'s secure checkout on your own device and pay ${formatPaymentMoney(payment.amount, payment.currency)}.${until ? ` It's held for you until ${until}.` : ""} ME3 does not charge you.` };
   }
@@ -157,12 +162,20 @@ export function paymentDisplayStatus(payment: PaymentRecord): string {
   return paymentStatusLabel(payment.status);
 }
 
+/** A seller hold past its time, before the background check has caught up. Nothing can be paid on it. */
+export function paymentHoldExpired(payment: PaymentRecord, now = Date.now()): boolean {
+  const network = payment.network;
+  if (!network || network.checkoutStatus !== "pending" || !network.expiresAt) return false;
+  const until = paymentTimestamp(network.expiresAt);
+  return until !== null && until <= now;
+}
+
 /** What happened at the seller for a network purchase, in the owner's words. */
 export function paymentNetworkNote(payment: PaymentRecord): string | null {
   const network = payment.network;
   if (!network) return null;
   switch (network.checkoutStatus) {
-    case "pending": return network.expiresAt ? `Held until ${paymentTime(network.expiresAt)}` : "Held for you";
+    case "pending": return paymentHoldExpired(payment) ? "Hold expired · nothing bought" : network.expiresAt ? `Held until ${paymentTime(network.expiresAt)}` : "Held for you";
     case "paid": return network.calendarEventId ? "Paid · in your calendar" : "Paid · receipt from the seller";
     case "expired": return "Hold expired · nothing bought";
     case "price_changed": return network.livePrice ? `Price changed to ${formatPaymentMoney(network.livePrice.amount, network.livePrice.currency)} · nothing bought` : "Price changed · nothing bought";

@@ -318,7 +318,7 @@ async function handOverResult(env: Env, ownerId: string, proposalId: string) {
     instructions: `Open the secure checkout on your own device and pay ${total} to ${view.merchant.name}. The ${network.slot ? "time is" : "item is"} held for you for 15 minutes. ME3 does not charge you.`,
   } : null;
   const next: Record<NetworkHandOverOutcome, string> = {
-    checkout_ready: "Give the owner the openUrl and instructions. Do not say it is paid: the owner pays on their own device. ME3 records the receipt from the seller automatically.",
+    checkout_ready: "Chat already shows a Pay card with the checkout button and the hold time, so do not paste the openUrl or repeat the shared name and email. In one or two sentences say it is ready to pay in the card. Do not say it is paid: the owner pays on their own device. ME3 records the receipt from the seller automatically.",
     price_changed: `The seller's price changed${network.livePrice ? ` to ${network.livePrice.amount} ${network.livePrice.currency}` : ""}, so nothing was bought. Tell the owner, and only if they still want it, propose again for a fresh approval.`,
     unavailable: "That time or item is no longer available, so nothing was bought. Tell the owner and offer to check availability again.",
     agent_checkout_off: `${view.merchant.name} has turned agent checkout off, so nothing was bought. Give the owner the seller's page to book there: ${view.merchant.url}`,

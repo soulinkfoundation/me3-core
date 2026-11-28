@@ -26,13 +26,19 @@ const emit = defineEmits<{ book: [person: PersonRow] }>();
       </span>
       <Button v-if="person.freeCall && !person.self" color="primary" shape="pill" size="small" :disabled="busy" @click="emit('book', person)">Book</Button>
       <Button v-else-if="person.url" color="primary" shape="pill" size="small" :href="person.url" target="_blank" rel="noopener noreferrer">Open</Button>
+      <ul v-if="person.offerings.length" class="people-cards__offerings" :aria-label="`What ${person.name} offers`">
+        <li v-for="offering in person.offerings" :key="offering.key">
+          <a v-if="offering.url" :href="offering.url" target="_blank" rel="noopener noreferrer"><span>{{ offering.title }}</span><b v-if="offering.price">{{ offering.price }}</b></a>
+          <span v-else class="people-cards__offering"><span>{{ offering.title }}</span><b v-if="offering.price">{{ offering.price }}</b></span>
+        </li>
+      </ul>
     </li>
   </ul>
 </template>
 
 <style scoped>
 .people-cards { display: flex; flex-direction: column; gap: 10px; box-sizing: border-box; width: min(560px, 100%); margin: 0; padding: 0; list-style: none; }
-.people-cards__card { display: flex; align-items: center; gap: 12px; padding: 12px 12px 12px 14px; border-radius: 18px; background: var(--ui-surface); box-shadow: var(--ui-shadow-sm), 0 0 0 1px var(--ui-border); }
+.people-cards__card { display: flex; flex-wrap: wrap; align-items: center; gap: 12px; padding: 12px 12px 12px 14px; border-radius: 18px; background: var(--ui-surface); box-shadow: var(--ui-shadow-sm), 0 0 0 1px var(--ui-border); }
 .people-cards__avatar { flex: 0 0 auto; width: 48px; height: 48px; border-radius: 50%; object-fit: cover; }
 .people-cards__avatar--initials { display: grid; place-items: center; background: var(--ui-accent-soft); color: var(--ui-accent-strong, var(--ui-accent)); font-size: 16px; font-weight: 600; }
 .people-cards__who { display: flex; flex: 1; flex-direction: column; gap: 1px; min-width: 0; }
@@ -42,5 +48,10 @@ const emit = defineEmits<{ book: [person: PersonRow] }>();
 .people-cards__place, .people-cards__offer { overflow: hidden; font-size: 13.5px; text-overflow: ellipsis; white-space: nowrap; }
 .people-cards__place { color: var(--ui-text-muted); }
 .people-cards__offer { display: flex; align-items: center; gap: 6px; margin-top: 3px; color: var(--ui-text); font-weight: 500; }
+.people-cards__offerings { display: flex; flex-direction: column; flex-basis: 100%; margin: 0; padding: 0; list-style: none; }
+.people-cards__offerings a, .people-cards__offering { display: flex; justify-content: space-between; gap: 12px; padding: 9px 2px; box-shadow: inset 0 1px 0 var(--ui-border); color: var(--ui-text); font-size: 14px; text-decoration: none; }
+.people-cards__offerings a:hover span { text-decoration: underline; }
+.people-cards__offerings span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.people-cards__offerings b { flex: none; font-weight: 600; font-variant-numeric: tabular-nums; }
 .people-cards__dot { flex: none; width: 7px; height: 7px; border-radius: 50%; background: var(--ui-accent); box-shadow: 0 0 0 3px var(--ui-accent-soft); }
 </style>

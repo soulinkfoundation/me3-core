@@ -50,7 +50,12 @@ export type PersonRow = {
   self: boolean;
   /** A free call (a duration and no price) the assistant can book for the owner. */
   freeCall: { title: string } | null;
+  /** What they sell, first few: each opens its own page when the site has one, else their site. */
+  offerings: Array<{ key: string; title: string; price: string; url: string }>;
 };
+
+/** Offerings shown on a person card; more stay on their site. */
+export const PERSON_CARD_OFFERINGS = 3;
 
 export const SITE_DRAFT_TOOL = "core_sites_starter_draft";
 export const FREE_CALL_TOOL = "core_scheduling_book_free_call";
@@ -155,6 +160,16 @@ export function peopleRows(data: unknown, now = new Date()): PersonRow[] {
       avatarUrl: text(person.avatarUrl),
       self: person.self === true,
       freeCall: free ? { title: text(free.title) } : null,
+      offerings: offerings.filter(offering => text(offering.title)).slice(0, PERSON_CARD_OFFERINGS).map((offering, offerIndex) => {
+        const price = record(offering.price), amount = Number(text(price.amount)), currency = text(price.currency).toUpperCase();
+        const url = text(offering.url);
+        return {
+          key: text(offering.id) || `${offerIndex}`,
+          title: text(offering.title),
+          price: currency && text(price.amount) && Number.isFinite(amount) ? formatMoney(amount, currency) : typeof offering.durationMinutes === "number" ? "Free" : "",
+          url: url.startsWith("https://") ? url : text(person.publicUrl) || text(person.profileUrl),
+        };
+      }),
     }];
   });
 }
@@ -196,7 +211,7 @@ function startingPrice(offerings: Record<string, unknown>[]): string {
 function formatMoney(amount: number, currency: string): string {
   const whole = Number.isInteger(amount);
   try {
-    return new Intl.NumberFormat(undefined, { style: "currency", currency, minimumFractionDigits: whole ? 0 : 2, maximumFractionDigits: whole ? 0 : 2 }).format(amount);
+    return new Intl.NumberFormat(undefined, { style: "currency", currency, currencyDisplay: "narrowSymbol", minimumFractionDigits: whole ? 0 : 2, maximumFractionDigits: whole ? 0 : 2 }).format(amount);
   } catch {
     return `${whole ? amount : amount.toFixed(2)} ${currency}`;
   }
