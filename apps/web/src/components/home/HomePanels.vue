@@ -9,6 +9,7 @@ import HomeNotesCard, { type HomeNote } from "./HomeNotesCard.vue";
 import NewsCard from "./NewsCard.vue";
 import NewsReader from "../news/NewsReader.vue";
 import NewsSettingsSheet from "../news/NewsSettingsSheet.vue";
+import NewsSetupSheet from "../news/NewsSetupSheet.vue";
 import { type NewsPaper, type NewsPaperAction, type NewsRating, type NewsToday } from "../../utils/news";
 import AppDialog from "../AppDialog.vue";
 import AssistantApprovalDialog from "../AssistantApprovalDialog.vue";
@@ -211,6 +212,7 @@ const newsPaper = computed<NewsPaper | null>(() => news.value?.paper ?? null);
 const newsBuilding = ref(false);
 const newsReader = ref(false);
 const newsSettingsOpen = ref(false);
+const newsSetupOpen = ref(false);
 const newsFresh = ref(false);
 let newsOpenWhenLoaded = false;
 // On Home: the intro until News is set up, then today's paper unless it is hidden until tomorrow.
@@ -258,6 +260,17 @@ async function newsBuild() {
     landNews();
   } catch (error) { toastFromUnknown(error, "Couldn't get today's news just now"); }
   finally { newsBuilding.value = false; }
+}
+// The setup sheet (me3-6ptk.13): first setup from the intro, or "Change my order" from settings.
+// Setting up in chat still works for anyone who asks ME3 to.
+function newsChangeOrder() { newsSettingsOpen.value = false; newsReader.value = false; newsSetupOpen.value = true; }
+function newsSetupClosed() { newsSetupOpen.value = false; void loadNews(); }
+/** Setup just cooked the first paper: show it on Home and open it. */
+function newsSetupFinished(paper: NewsPaper) {
+  newsSetupOpen.value = false;
+  if (news.value) news.value = { ...news.value, setUp: true, paper };
+  newsReader.value = true;
+  void loadNews();
 }
 /** Opens today's paper from chat or a notification: now, or as soon as it has loaded. */
 function openNews() {
@@ -762,7 +775,7 @@ onBeforeUnmount(() => {
               </template>
               <HomeNotesCard :ref="el => { notesCard = el as typeof notesCard }" v-model:open="notesOpen" :notes="notes" @saved="noteSaved" />
             </template>
-            <NewsCard v-else-if="card === 'soup' && news" :today="news" :building="newsBuilding" @setup="emit('ask', 'Set up my news')" @open="newsReader = true" />
+            <NewsCard v-else-if="card === 'soup' && news" :today="news" :building="newsBuilding" @setup="newsSetupOpen = true" @open="newsReader = true" />
             <template v-else-if="card === 'people'"><template v-if="peopleCard.state === 'people'"><button v-for="person in peopleCard.people" :key="person.id" type="button" class="home-person" @click="openPersonId = person.id"><PersonAvatar :contact="person" :size="40" /><strong>{{ firstName(person.name) }}</strong><span class="home-muted home-person__since">{{ formatSinceShort(person.lastInTouchAt) || 'Not yet' }}</span></button></template><p v-else class="home-muted">All caught up.</p></template>
           </div>
         </article>
@@ -785,7 +798,8 @@ onBeforeUnmount(() => {
     <CustomCardAbout :record="aboutCard" :working="aboutWorking" @close="aboutCardId = null" @rollback="rollbackCard" @remove="removeCard" @change="aboutCard && changeWithME3(aboutCard)" />
     <PersonSheet :contact="openPerson" @close="openPersonId = null" />
     <NewsReader v-if="newsReader && newsPaper && news" :paper="newsPaper" :next-time="news.nextTime" @close="newsReader = false" @done="newsDone" @settings="newsSettingsOpen = true" @rate="newsRate" @ask="newsAsk" />
-    <NewsSettingsSheet :open="newsSettingsOpen" @close="newsSettingsOpen = false" />
+    <NewsSettingsSheet :open="newsSettingsOpen" @close="newsSettingsOpen = false" @order="newsChangeOrder" />
+    <NewsSetupSheet v-if="newsSetupOpen" @close="newsSetupClosed" @finished="newsSetupFinished" />
     <AssistantApprovalDialog :approval="reviewApproval" :busy="Boolean(reviewApproval && busy.includes(reviewApproval.id))" :error="approvalError" @close="reviewApproval = null" @decide="decideCoreApproval" @resolved="paymentResolved" />
   </div>
 </template>

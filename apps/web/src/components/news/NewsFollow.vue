@@ -7,7 +7,8 @@ import type { useNewsFollow } from "../../composables/useNewsFollow";
 
 // "Who do you follow?" (me3-6ptk.10, .11): pick faces, add someone else by name or link, or bring
 // in YouTube subscriptions. The caller owns the state (useNewsFollow) and saves the picks.
-const props = defineProps<{ state: ReturnType<typeof useNewsFollow> }>();
+// `pickClass` goes on the YouTube pick dialog, which opens outside this component, so a caller with its own look can dress it too.
+const props = defineProps<{ state: ReturnType<typeof useNewsFollow>; pickClass?: string }>();
 const media: Array<{ id: NewsMedium | null; label: string }> = [{ id: null, label: "All" }, { id: "listen", label: "Listen" }, { id: "read", label: "Read" }, { id: "watch", label: "Watch" }];
 const medium = ref<NewsMedium | null>(null);
 const own = ref("");
@@ -57,7 +58,7 @@ async function addYouTube(channels: Parameters<typeof props.state.addYouTube>[0]
         </button>
       </li>
     </ul>
-    <NewsYouTubePick :channels="state.youtubeChannels.value" :following="followingFeeds" :room="state.room.value" @add="addYouTube" @close="state.youtubeChannels.value = null" />
+    <NewsYouTubePick :class="pickClass" :channels="state.youtubeChannels.value" :following="followingFeeds" :room="state.room.value" @add="addYouTube" @close="state.youtubeChannels.value = null" />
   </div>
 </template>
 

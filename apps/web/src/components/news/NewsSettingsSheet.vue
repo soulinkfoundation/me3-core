@@ -10,8 +10,9 @@ import { NEWS_TIME_CHOICES } from "../../utils/news";
 import { readFollowPicks } from "../../utils/news-follow";
 
 // News settings (me3-6ptk.2): topics, the voices the owner follows, a time and whether to be told.
+// "Change my order" hands over to the setup sheet (me3-6ptk.13).
 const props = defineProps<{ open: boolean }>();
-const emit = defineEmits<{ close: []; changed: [] }>();
+const emit = defineEmits<{ close: []; changed: []; order: [] }>();
 const { settings, load, patch, toggle, addTopic } = useNewsSettings();
 watch(() => props.open, open => { if (open) void load(); }, { immediate: true });
 const changed = async (work: Promise<boolean> | undefined) => { if (await work) emit("changed"); };
@@ -58,6 +59,13 @@ watch(() => props.open, open => { if (!open) voicesOpen.value = false; });
             <span class="news-settings__text"><span>Let me know when it’s ready</span><span class="news-settings__sub">One notification each morning</span></span>
             <button type="button" class="news-switch" role="switch" aria-label="Let me know when it’s ready" :aria-checked="settings.notify" @click="changed(patch({ notify: !settings.notify }, { notify: !settings.notify }))" />
           </div>
+        </div>
+        <div class="news-settings__list">
+          <button type="button" class="news-settings__row news-settings__row--button" data-testid="news-settings-change-order" @click="emit('order')">
+            <UiIcon name="SlidersHorizontal" :size="18" />
+            <span class="news-settings__text"><span>Change my order</span><span class="news-settings__sub">Feelings, topics and voices, step by step</span></span>
+            <UiIcon name="ChevronRight" :size="16" />
+          </button>
         </div>
       </template>
       <p v-else class="news-settings__sub" role="status">Loading…</p>
