@@ -4,6 +4,7 @@
 // key holds the rest. Only topic words and a region ever leave the install.
 import { JournalInputError } from "./journal";
 import { normalizeDailyBriefingTime } from "./morning-calendar-push";
+import { ownedMissionStatement } from "@me3-core/plugin-mission-control";
 import { publicTrade } from "@me3-core/site-renderer";
 import { ownerMeJson, townToTry } from "./news-place";
 import { cleanCityName, geocodeCity, type NewsPlace } from "./news-weather";
@@ -210,7 +211,8 @@ export async function getNewsProfile(env: Env, userId: string, occupation: strin
     ownerMeJson(env, userId),
     env.DB.prepare("SELECT mission_statement, settings_json FROM mission_dashboard_settings WHERE user_id = ?").bind(userId).first<{ mission_statement: string | null; settings_json: string | null }>().catch(() => null),
   ]);
-  const statement = mission?.mission_statement?.replace(/\s+/g, " ").trim() || null;
+  // The starter template ("I help [who] …") is not the owner's mission, so setup shows an empty field.
+  const statement = ownedMissionStatement(mission?.mission_statement ?? null)?.replace(/\s+/g, " ").trim() || null;
   return { work: (meJson && publicTrade(meJson)) || occupation || null, mission: statement ? statement.slice(0, 160) : null, goals: goalsFromMission(mission?.settings_json) };
 }
 
