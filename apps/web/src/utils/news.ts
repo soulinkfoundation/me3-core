@@ -23,12 +23,52 @@ export type NewsStory = {
   audioUrl?: string;
   /** Trusted accounts that shared it on X. */
   sharedBy?: { count: number; handles: string[] };
+  /** Which of the owner's feelings it serves. */
+  feeling?: NewsFeelingId;
 };
+export type NewsFeelingId = "hopeful" | "motivated" | "know" | "connected";
+/** The four feelings as the setup sheet names them. */
+export const NEWS_FEELING_TAGS: Record<NewsFeelingId, { emoji: string; name: string }> = {
+  hopeful: { emoji: "🌱", name: "Hopeful" },
+  motivated: { emoji: "⚡", name: "Motivated" },
+  know: { emoji: "📡", name: "In the know" },
+  connected: { emoji: "🤝", name: "Connected" },
+};
+export function newsFeelingTag(story: Pick<NewsStory, "feeling">): string {
+  const tag = story.feeling ? NEWS_FEELING_TAGS[story.feeling] : null;
+  return tag ? `${tag.emoji} ${tag.name}` : "";
+}
+/** "What's in today's bowl": the paper's food label (me3-6ptk.16). Missing on older papers. */
+export type NewsBowl = {
+  sources: number; voices: number; fromVoices: number; base: NewsFeelingId[]; bigStories: boolean;
+  sauce: string[]; fromSauce: number; stories: number; episodes: number; videos: number;
+  feelings: Partial<Record<NewsFeelingId, number>>;
+  skimmed: { fearOutrage: number; sponsored: number; aiFiller: number; total: number } | null;
+};
+export type NewsBowlLine = { label: string; value: string; strong?: boolean; quiet?: boolean };
+/** The label's lines, top to bottom: the serving, the feelings, the sauce, and what was skimmed off. */
+export function newsBowlLines(bowl: NewsBowl, minutes: number): NewsBowlLine[] {
+  const plural = (n: number, one: string, many: string) => `${n} ${n === 1 ? one : many}`;
+  const serving = [plural(bowl.stories, "story", "stories"), bowl.episodes ? plural(bowl.episodes, "episode", "episodes") : "", bowl.videos ? plural(bowl.videos, "video", "videos") : ""].filter(Boolean).join(" · ");
+  const lines: NewsBowlLine[] = [{ label: serving, value: `about ${minutes} min`, strong: true }];
+  for (const id of Object.keys(NEWS_FEELING_TAGS) as NewsFeelingId[]) {
+    const count = bowl.feelings[id];
+    if (count) lines.push({ label: `${NEWS_FEELING_TAGS[id].emoji} ${NEWS_FEELING_TAGS[id].name}`, value: String(count) });
+  }
+  if (bowl.fromSauce) lines.push({ label: "🧂 Your sauce", value: String(bowl.fromSauce) });
+  if (bowl.fromVoices) lines.push({ label: "👋 From people you follow", value: String(bowl.fromVoices) });
+  if (bowl.skimmed) {
+    lines.push({ label: "Skimmed off: fear and outrage", value: String(bowl.skimmed.fearOutrage), quiet: true });
+    lines.push({ label: "Skimmed off: AI filler and ads", value: String(bowl.skimmed.aiFiller + bowl.skimmed.sponsored), quiet: true });
+  }
+  return lines;
+}
 export type NewsWeather = { emoji: string; temp: string; text: string };
 export type NewsPages = {
   front: { lead: NewsStory; briefs: NewsStory[] };
   work: { topics: string[]; stories: NewsStory[] } | null;
-  media: { video: NewsStory | null; listen: NewsStory | null; more?: NewsStory[] } | null;
+  /** `listens`: the Listen strip, new episodes from people the owner follows. */
+  media: { video: NewsStory | null; listen: NewsStory | null; more?: NewsStory[]; listens?: NewsStory[] } | null;
   topics: { stories: NewsStory[] } | null;
   near: { city: string | null; weather: NewsWeather | null; local: NewsStory | null; good: NewsStory | null } | null;
 };
@@ -45,6 +85,7 @@ export type NewsPaper = {
   frontOnly: boolean;
   pages: NewsPages;
   counts: { pages: number; stories: number; videos: number; minutes: number; considered: number };
+  bowl?: NewsBowl;
 };
 export type NewsToday = { setUp: boolean; paused: boolean; paper: NewsPaper | null; time: string; nextTime: string };
 export type NewsTopicChip = { word: string; label: string; on: boolean };

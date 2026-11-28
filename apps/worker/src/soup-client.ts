@@ -107,7 +107,11 @@ export type NewsStory = {
   audioUrl?: string;
   /** Trusted accounts that shared this story on X: how many, and up to three of their handles. */
   sharedBy?: { count: number; handles: string[] };
+  /** Which of the owner's base feelings it serves (Soup's `feeling`). */
+  feeling?: "hopeful" | "motivated" | "know" | "connected";
 };
+/** What Soup left out for this request (thehumansoup-lnf.40.20): counts only, never the stories. */
+export type NewsSkimmed = { fearOutrage: number; sponsored: number; aiFiller: number; sourcesLookedAt: number | null };
 export type NewsTodayRequest = {
   topics: string[]; country?: string | null; city?: string | null; since?: string; exclude?: string[];
   /** How the owner would like to feel, first leading (Soup's `base`). */
@@ -125,6 +129,8 @@ export type NewsToday = {
   media: NewsStory[];
   /** The newest piece from each voice the owner follows. Empty when none were sent or Soup is older. */
   followed?: NewsStory[];
+  /** Null until Soup reports what it skimmed off. */
+  skimmed?: NewsSkimmed | null;
   meta: { considered: number; grouped: boolean };
 };
 
@@ -173,8 +179,18 @@ function readNewsStories(value: unknown): NewsStory[] {
       const handles = (Array.isArray(shared.handles) ? shared.handles : []).filter((handle): handle is string => typeof handle === "string" && /^[A-Za-z0-9_]{1,15}$/.test(handle)).slice(0, 3);
       story.sharedBy = { count: Math.max(shared.count, handles.length), handles };
     }
+    if (typeof row.feeling === "string" && NEWS_FEELING_WORDS.has(row.feeling)) story.feeling = row.feeling;
     return story.headline ? [story] : [];
   });
+}
+
+function readSkimmed(value: unknown): NewsSkimmed | null {
+  if (!value || typeof value !== "object") return null;
+  const row = value as Record<string, unknown>;
+  const count = (key: string) => typeof row[key] === "number" && Number.isInteger(row[key]) && (row[key] as number) >= 0 ? row[key] as number : null;
+  const fearOutrage = count("fearOutrage"), sponsored = count("sponsored"), aiFiller = count("aiFiller");
+  if (fearOutrage === null && sponsored === null && aiFiller === null) return null;
+  return { fearOutrage: fearOutrage ?? 0, sponsored: sponsored ?? 0, aiFiller: aiFiller ?? 0, sourcesLookedAt: count("sourcesLookedAt") };
 }
 
 /** Reads a news response defensively: a field that is missing or the wrong shape becomes empty, never a crash. */
@@ -191,6 +207,7 @@ export function readNewsToday(data: unknown): NewsToday {
     local: readNewsStories(raw.local),
     media: readNewsStories(raw.media),
     followed: readNewsStories(raw.followed),
+    skimmed: readSkimmed(raw.skimmed),
     meta: { considered: typeof meta.considered === "number" ? meta.considered : 0, grouped: meta.grouped === true },
   };
 }

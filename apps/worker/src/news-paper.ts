@@ -11,7 +11,7 @@ import { describeNewsSettings, newsIsSetUp, newsTopicLabel, settleOwnerTown } fr
 import { countryFromTimezone, fetchWeather, type NewsWeather } from "./news-weather";
 import { isCorePluginEnabled } from "./plugins";
 import { getOwnerProfile } from "./sites";
-import { SoupUnavailableError, soupMinutes, type NewsStory, type NewsToday, type SoupBowlItem, type SoupClient, type SoupMedium } from "./soup-client";
+import { SoupUnavailableError, soupMinutes, type NewsSkimmed, type NewsStory, type NewsToday, type SoupBowlItem, type SoupClient, type SoupMedium } from "./soup-client";
 import { localInstant, localParts, runWithFastModel, soupClientFor } from "./soup-servings";
 import { SOUP_PLUGIN_ID, getSoupTaste, parseSoupTaste, type NewsFeeling, type NewsPrefs, type SoupTaste } from "./soup-taste";
 import { newsFixtureFor, newsFixtureGood, newsFixturePicks } from "./testing/news-today.fixture";
@@ -42,17 +42,46 @@ export type PaperStory = {
   audioUrl?: string;
   /** Trusted accounts that shared it on X, shown as "Shared on X by @handle and N others". */
   sharedBy?: { count: number; handles: string[] };
+  /** Which of the owner's feelings it serves, shown as a small tag. */
+  feeling?: NewsFeeling;
 };
 export type NewsPaperPages = {
   front: { lead: PaperStory; briefs: PaperStory[] };
   work: { topics: string[]; stories: PaperStory[] } | null;
   /** `more`: up to two further videos that play in place, after the one ME3 picked. */
-  media: { video: PaperStory | null; listen: PaperStory | null; more?: PaperStory[] } | null;
+  /** `listens`: the Listen strip, new episodes from voices the owner follows, after the one ME3 picked. */
+  media: { video: PaperStory | null; listen: PaperStory | null; more?: PaperStory[]; listens?: PaperStory[] } | null;
   topics: { stories: PaperStory[] } | null;
   near: { city: string | null; weather: NewsWeather | null; local: PaperStory | null; good: PaperStory | null } | null;
 };
 export type NewsRating = "fire" | "ok" | "sleepy";
 export type NewsPaperCounts = { pages: number; stories: number; videos: number; minutes: number; considered: number };
+/**
+ * "What's in today's bowl": the paper's food label, and the real numbers the cooking screen ticks
+ * through while the first paper is built (me3-6ptk.16). Counts only.
+ */
+export type NewsBowl = {
+  /** Sources Soup looked at, or the distinct sources among today's candidates when Soup doesn't say. */
+  sources: number;
+  /** How many voices the owner follows went into the order. */
+  voices: number;
+  /** Pieces in the paper from voices the owner follows. */
+  fromVoices: number;
+  /** The base, first leading. */
+  base: NewsFeeling[];
+  bigStories: boolean;
+  /** The owner's topics as they wrote them, work first. */
+  sauce: string[];
+  /** Stories in the paper picked for those topics (For your work and Just for you). */
+  fromSauce: number;
+  stories: number;
+  episodes: number;
+  videos: number;
+  /** Stories in the paper per feeling, for the ones Soup tagged. */
+  feelings: Partial<Record<NewsFeeling, number>>;
+  /** What Soup skimmed off; null until Soup reports it (thehumansoup-lnf.40.20). */
+  skimmed: { fearOutrage: number; sponsored: number; aiFiller: number; total: number } | null;
+};
 export type NewsPaper = {
   id: string;
   dateKey: string;
@@ -67,6 +96,8 @@ export type NewsPaper = {
   frontOnly: boolean;
   pages: NewsPaperPages;
   counts: NewsPaperCounts;
+  /** Missing on papers made before the bowl label. */
+  bowl?: NewsBowl;
 };
 
 type PaperRow = {
@@ -88,6 +119,9 @@ const BRIEFS = 4;
 /** Videos after the one ME3 picked, each short enough for a morning. */
 const MORE_VIDEOS = 2;
 const MORE_VIDEO_MAX_SECONDS = 30 * 60;
+/** Episodes from followed voices in the Listen strip, after ME3's pick. */
+const LISTEN_STRIP = 3;
+const BOWL_SAUCE = 8;
 
 // ── Candidates ──────────────────────────────────────────────
 
@@ -98,6 +132,8 @@ export type NewsCandidates = {
   local: NewsStory[];
   media: NewsStory[];
   considered: number;
+  /** Ids of pieces from voices the owner follows. */
+  followed?: string[];
 };
 
 /** Sorts Soup's answer into the paper's lanes and drops anything the owner wants less of. */
@@ -123,6 +159,7 @@ export function toNewsCandidates(news: NewsToday, taste: Pick<SoupTaste, "workTo
     local: news.local.filter(keep),
     media: [...followed.filter(story => story.medium !== "read"), ...news.media.filter(story => keep(story) && !followedIds.has(story.id))],
     considered: news.meta.considered,
+    followed: [...followedIds],
   };
 }
 
@@ -349,6 +386,7 @@ function toPaperStory(story: NewsStory, given: { tag?: string; note?: string; ac
     ...(extra.tag ? { tag: extra.tag } : {}), ...(extra.note ? { note: extra.note } : {}), ...(extra.action ? { action: extra.action } : {}),
     ...(minutes ? { minutes } : {}), ...(story.embedUrl ? { embedUrl: story.embedUrl } : {}),
     ...(story.audioUrl ? { audioUrl: story.audioUrl } : {}), ...(story.sharedBy ? { sharedBy: story.sharedBy } : {}),
+    ...(story.feeling ? { feeling: story.feeling } : {}),
   };
 }
 
@@ -407,6 +445,11 @@ export function layoutPaper(candidates: NewsCandidates, picks: PaperPicks | null
   const short = watch.filter(story => !story.durationSeconds || story.durationSeconds <= MORE_VIDEO_MAX_SECONDS);
   const playable = short.filter(story => story.embedUrl);
   while (video && moreVideos.length < MORE_VIDEOS) { const next = take(playable) || take(short); if (!next) break; moreVideos.push(next); }
+  // The Listen strip: new episodes from voices the owner follows, ones that play here first.
+  const followedSet = new Set(candidates.followed || []);
+  const followedListens = listenPool.filter(story => followedSet.has(story.id));
+  const listens: NewsStory[] = [];
+  while (listens.length < LISTEN_STRIP) { const next = take(followedListens.filter(story => story.audioUrl)) || take(followedListens); if (!next) break; listens.push(next); }
 
   const minePool = readable(mine);
   const topicOf = new Map(mine.map(entry => [entry.story.id, entry.topic]));
@@ -429,7 +472,10 @@ export function layoutPaper(candidates: NewsCandidates, picks: PaperPicks | null
     pages: {
       front,
       work: workStories.length ? { topics: candidates.work.map(entry => label(entry.topic)), stories: workStories } : null,
-      media: video || listen ? { video: video ? toPaperStory(video, { note: picks.video?.id === video.id ? picks.video.note : undefined }) : null, listen: listen ? toPaperStory(listen) : null, ...(moreVideos.length ? { more: moreVideos.map(story => toPaperStory(story)) } : {}) } : null,
+      media: video || listen || listens.length ? {
+        video: video ? toPaperStory(video, { note: picks.video?.id === video.id ? picks.video.note : undefined }) : null, listen: listen ? toPaperStory(listen) : null,
+        ...(moreVideos.length ? { more: moreVideos.map(story => toPaperStory(story)) } : {}), ...(listens.length ? { listens: listens.map(story => toPaperStory(story)) } : {}),
+      } : null,
       topics: topicStories.length ? { stories: topicStories } : null,
       near,
     },
@@ -441,6 +487,39 @@ export function countPaper(pages: NewsPaperPages, considered: number): NewsPaper
   const sections = 1 + [pages.work, pages.media, pages.topics, pages.near].filter(Boolean).length;
   // Every paper ends with its own last page.
   return { pages: sections + 1, stories, videos: (pages.media?.video ? 1 : 0) + (pages.media?.more?.length || 0), minutes: Math.max(1, Math.round(stories * 0.6 + (pages.media ? 1 : 0))), considered };
+}
+
+/** Every piece printed in the paper, once each. */
+export function paperPieces(pages: NewsPaperPages): PaperStory[] {
+  const all = [pages.front.lead, ...pages.front.briefs, ...(pages.work?.stories || []), pages.media?.video, pages.media?.listen, ...(pages.media?.more || []), ...(pages.media?.listens || []), ...(pages.topics?.stories || []), pages.near?.local, pages.near?.good];
+  const seen = new Set<string>();
+  return all.filter((story): story is PaperStory => !!story && !seen.has(story.id) && !!seen.add(story.id));
+}
+
+/** The food label for a laid-out paper: what went in, what came out, and what Soup skimmed off. */
+export function bowlFor(pages: NewsPaperPages, candidates: NewsCandidates, input: { skimmed: NewsSkimmed | null | undefined; prefs: Pick<NewsPrefs, "base" | "bigStories" | "follows" | "labels">; sauce: string[] }): NewsBowl {
+  const pieces = paperPieces(pages);
+  const gathered = [...candidates.front, ...candidates.work.flatMap(entry => entry.stories), ...candidates.mine.flatMap(entry => entry.stories), ...candidates.local, ...candidates.media];
+  const sourceNames = new Set(gathered.map(story => story.sources[0]?.name?.toLowerCase()).filter(Boolean));
+  const followed = new Set(candidates.followed || []);
+  const feelings: Partial<Record<NewsFeeling, number>> = {};
+  for (const piece of pieces) if (piece.feeling) feelings[piece.feeling] = (feelings[piece.feeling] || 0) + 1;
+  const skimmed = input.skimmed ? { fearOutrage: input.skimmed.fearOutrage, sponsored: input.skimmed.sponsored, aiFiller: input.skimmed.aiFiller, total: input.skimmed.fearOutrage + input.skimmed.sponsored + input.skimmed.aiFiller } : null;
+  const sauce = [...new Set(input.sauce.map(topic => newsTopicLabel(topic, input.prefs.labels)))].slice(0, BOWL_SAUCE);
+  return {
+    sources: input.skimmed?.sourcesLookedAt || sourceNames.size,
+    voices: input.prefs.follows.length,
+    fromVoices: pieces.filter(piece => followed.has(piece.id)).length,
+    base: [...input.prefs.base],
+    bigStories: input.prefs.bigStories !== false,
+    sauce,
+    fromSauce: (pages.work?.stories.length || 0) + (pages.topics?.stories || []).filter(story => !followed.has(story.id)).length,
+    stories: pieces.filter(piece => piece.medium === "read").length,
+    episodes: pieces.filter(piece => piece.medium === "listen").length,
+    videos: pieces.filter(piece => piece.medium === "watch").length,
+    feelings,
+    skimmed,
+  };
 }
 
 // ── When ────────────────────────────────────────────────────
@@ -472,9 +551,9 @@ export function shouldBuildPaper(existing: { status: string; claimed_at: number 
 
 function serialize(row: PaperRow, time: string): NewsPaper | null {
   if (row.status !== "ready") return null;
-  const saved = parseJsonRecord(row.paper_json) as { pages?: NewsPaperPages; counts?: NewsPaperCounts; frontOnly?: boolean; time?: string };
+  const saved = parseJsonRecord(row.paper_json) as { pages?: NewsPaperPages; counts?: NewsPaperCounts; bowl?: NewsBowl; frontOnly?: boolean; time?: string };
   if (!saved.pages?.front?.lead || !saved.counts) return null;
-  return { id: row.id, dateKey: row.date_key, time: saved.time || time, deliverAt: row.deliver_at, readyAt: row.ready_at || row.deliver_at, readAt: row.read_at, hiddenAt: row.hidden_at, rating: row.rating, frontOnly: saved.frontOnly === true, pages: saved.pages, counts: saved.counts };
+  return { id: row.id, dateKey: row.date_key, time: saved.time || time, deliverAt: row.deliver_at, readyAt: row.ready_at || row.deliver_at, readAt: row.read_at, hiddenAt: row.hidden_at, rating: row.rating, frontOnly: saved.frontOnly === true, pages: saved.pages, counts: saved.counts, ...(saved.bowl ? { bowl: saved.bowl } : {}) };
 }
 
 async function claimPaper(env: Env, ownerId: string, dateKey: string, deliverAt: Date, now: Date, force: boolean): Promise<string | null> {
@@ -560,8 +639,9 @@ export async function composeNewsPaper(env: Env, ownerId: string, options: Compo
     const laidOut = layoutPaper(candidates, picks, { labels: prefs.labels, city: prefs.city, weather, good });
     if (!laidOut) return fail("Nothing to lead with");
     const counts = countPaper(laidOut.pages, candidates.considered);
+    const bowl = bowlFor(laidOut.pages, candidates, { skimmed: news.skimmed, prefs, sauce: [...taste.workTopics.map(topic => topic.topic), ...taste.interests] });
     await env.DB.prepare("UPDATE news_papers SET status = 'ready', paper_json = ?, ready_at = ?, read_at = NULL, hidden_at = NULL, rating = NULL, updated_at = ? WHERE id = ? AND user_id = ?")
-      .bind(JSON.stringify({ pages: laidOut.pages, counts, frontOnly: laidOut.frontOnly, time: options.time }), now.toISOString(), now.toISOString(), id, ownerId).run();
+      .bind(JSON.stringify({ pages: laidOut.pages, counts, bowl, frontOnly: laidOut.frontOnly, time: options.time }), now.toISOString(), now.toISOString(), id, ownerId).run();
     const row = await env.DB.prepare("SELECT * FROM news_papers WHERE id = ?").bind(id).first<PaperRow>();
     return row ? serialize(row, options.time) : null;
   } catch (error) {

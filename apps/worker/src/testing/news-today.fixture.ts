@@ -82,7 +82,13 @@ export function newsFixtureGood(request: { city?: string | null }): NewsStory {
 /** The fixture for a request, chosen the way the personas differ: the coach lives in Galway. */
 export function newsFixtureFor(request: { city?: string | null; topics?: string[] }): NewsToday {
   const coach = /galway/i.test(request.city || "") || (request.topics || []).some(topic => /coach/i.test(topic));
-  return structuredClone(coach ? NEWS_FIXTURE_COACH : NEWS_FIXTURE_FOUNDER);
+  const news = structuredClone(coach ? NEWS_FIXTURE_COACH : NEWS_FIXTURE_FOUNDER);
+  // For local preview of the bowl label (me3-6ptk.16): feelings in turn, and Soup's skimmed counts.
+  const feelings = ["know", "hopeful", "motivated", "hopeful", "connected"] as const;
+  let turn = 0;
+  for (const story of [...news.frontPage, ...news.byTopic.flatMap(entry => entry.stories), ...news.local]) if (!story.feeling) story.feeling = feelings[turn++ % feelings.length];
+  news.skimmed = { fearOutrage: 38, sponsored: 2, aiFiller: 4, sourcesLookedAt: 212 };
+  return news;
 }
 
 /**

@@ -4,7 +4,7 @@ import Button from "../Button.vue";
 import UiIcon from "../UiIcon.vue";
 import NewsPhoto from "./NewsPhoto.vue";
 import NewsStoryRow from "./NewsStoryRow.vue";
-import { NEWS_PAGE_TITLES, newsDate, newsEmbedUrl, newsLength, newsPageKinds, newsSharedLine, type NewsPaper, type NewsRating } from "../../utils/news";
+import { NEWS_PAGE_TITLES, newsBowlLines, newsDate, newsEmbedUrl, newsFeelingTag, newsLength, newsPageKinds, newsSharedLine, type NewsPaper, type NewsRating, type NewsStory } from "../../utils/news";
 
 // The paper, opened (me3-6ptk.5): a handful of pages you flick through, with a page turn. Swipe,
 // tap the edges or the dots, or use the arrow keys; with a mouse there are arrows too. The page's
@@ -20,17 +20,18 @@ const kind = computed(() => kinds.value[index.value]);
 const last = computed(() => kinds.value.length - 1);
 /** The video playing in place, by story id. One at a time; it stops when the page turns. */
 const playing = ref<string | null>(null);
-const listening = ref(false);
+/** The episode playing in place, by story id: ME3's pick or one from the Listen strip. */
+const listening = ref<string | null>(null);
 const pageEl = ref<HTMLElement | null>(null);
 const closeEl = ref<HTMLButtonElement | null>(null);
 function go(target: number) {
   if (target < 0 || target > last.value || target === index.value) return;
   direction.value = target > index.value ? "next" : "prev";
   index.value = target;
-  playing.value = null; listening.value = false;
+  playing.value = null; listening.value = null;
   void nextTick(() => { if (pageEl.value) pageEl.value.scrollTop = 0; });
 }
-watch(() => props.paper.id, () => { index.value = 0; direction.value = ""; playing.value = null; listening.value = false; });
+watch(() => props.paper.id, () => { index.value = 0; direction.value = ""; playing.value = null; listening.value = null; });
 function keys(event: KeyboardEvent) {
   // The settings sheet opens over the paper and takes the keyboard while it is up.
   if (document.querySelector("dialog[open]")) return;
@@ -62,8 +63,13 @@ const videos = computed(() => {
   const media = props.paper.pages.media;
   return [media?.video, ...(media?.more || [])].filter((story): story is NonNullable<typeof story> => Boolean(story)).map(story => ({ story, embed: newsEmbedUrl(story), length: story.minutes ? `${story.minutes} min` : "" }));
 });
-function play(id: string) { listening.value = false; playing.value = id; }
-function listen() { playing.value = null; listening.value = true; }
+function play(id: string) { listening.value = null; playing.value = id; }
+function listen(id: string) { playing.value = null; listening.value = id; }
+/** ME3's pick, then the Listen strip: new episodes from people the owner follows. */
+const listens = computed<Array<{ story: NewsStory; strip: boolean }>>(() => {
+  const media = props.paper.pages.media;
+  return [...(media?.listen ? [{ story: media.listen, strip: false }] : []), ...(media?.listens || []).map(story => ({ story, strip: true }))];
+});
 // The top bar names the page: "News" and the date on the front, the section and what is in it after.
 const title = computed(() => kind.value === "front" || kind.value === "end" ? "News" : kind.value === "near" ? props.paper.pages.near?.city || NEWS_PAGE_TITLES.near : NEWS_PAGE_TITLES[kind.value]);
 const subtitle = computed(() => {
@@ -75,7 +81,9 @@ const subtitle = computed(() => {
   if (kind.value === "near") return pages.near?.weather ? "Weather and what’s on near you" : "What’s on near you";
   return "";
 });
-const ratings: Array<{ id: NewsRating; emoji: string; label: string }> = [{ id: "fire", emoji: "🔥", label: "Loved it" }, { id: "ok", emoji: "🙂", label: "It was fine" }, { id: "sleepy", emoji: "😴", label: "A bit dull" }];
+// "How did it taste?" The answers are the paper's existing rating, so it still steers tomorrow's.
+const ratings: Array<{ id: NewsRating; emoji: string; label: string }> = [{ id: "fire", emoji: "😋", label: "Delicious" }, { id: "ok", emoji: "🙂", label: "Fine" }, { id: "sleepy", emoji: "😕", label: "Not for me" }];
+const bowl = computed(() => props.paper.bowl ? newsBowlLines(props.paper.bowl, props.paper.counts.minutes) : []);
 const endLine = computed(() => {
   const { stories, videos } = props.paper.counts;
   return `${stories} ${stories === 1 ? "story" : "stories"}${videos === 1 ? " and a video" : videos > 1 ? ` and ${videos} videos` : ""}. Tomorrow’s will be ready at ${props.nextTime}.`;
@@ -98,7 +106,7 @@ const endLine = computed(() => {
                 <NewsPhoto :id="paper.pages.front.lead.id" :src="paper.pages.front.lead.image" :height="200" />
                 <span class="news-lead__ti">{{ paper.pages.front.lead.headline }}</span>
                 <span v-if="paper.pages.front.lead.summary" class="news-dek news-lead__dek">{{ paper.pages.front.lead.summary }}</span>
-                <span class="news-src news-by">{{ paper.pages.front.lead.source }}</span>
+                <span class="news-meta"><span class="news-src news-by">{{ paper.pages.front.lead.source }}</span><span v-if="paper.pages.front.lead.feeling" class="news-feel">{{ newsFeelingTag(paper.pages.front.lead) }}</span></span>
                 <span v-if="newsSharedLine(paper.pages.front.lead)" class="news-src news-shared">{{ newsSharedLine(paper.pages.front.lead) }}</span>
               </a>
               <span v-if="paper.pages.front.lead.note" class="news-note">{{ paper.pages.front.lead.note }}</span>
@@ -118,19 +126,20 @@ const endLine = computed(() => {
               </component>
               <div class="news-video__text"><a class="news-video__ti" :class="{ 'news-video__ti--more': n > 0 }" :href="item.story.url" target="_blank" rel="noopener noreferrer">{{ item.story.headline }}</a><span class="news-src news-by">{{ item.story.source }}</span><span v-if="item.story.note" class="news-note">{{ item.story.note }}</span></div>
             </div>
-            <template v-if="paper.pages.media.listen">
-              <!-- With its own audio file a listen plays here; otherwise it opens at its source. -->
-              <div v-if="paper.pages.media.listen.audioUrl" class="news-box news-listen-box">
-                <button type="button" class="news-listen" :aria-label="`Listen to ${paper.pages.media.listen.headline}`" :aria-expanded="listening" @click="listen">
-                  <UiIcon name="Headphones" :size="24" />
-                  <span class="news-listen__text"><span class="news-serif news-listen__ti">{{ paper.pages.media.listen.headline }}</span><span class="news-src">{{ [paper.pages.media.listen.source, newsLength(paper.pages.media.listen)].filter(Boolean).join(' · ') }}</span></span>
-                  <span v-if="!listening" class="news-listen__go" aria-hidden="true"><UiIcon name="Play" :size="16" /></span>
+            <p v-if="listens.some(item => item.strip)" class="news-src news-strip__h">Listen · new from people you follow</p>
+            <template v-for="item in listens" :key="item.story.id">
+              <!-- With its own audio file an episode plays here; otherwise it opens at its source. -->
+              <div v-if="item.story.audioUrl" class="news-box news-listen-box" :class="{ 'news-listen-box--strip': item.strip }">
+                <button type="button" class="news-listen" :aria-label="`Listen to ${item.story.headline}`" :aria-expanded="listening === item.story.id" @click="listen(item.story.id)">
+                  <UiIcon name="Headphones" :size="item.strip ? 20 : 24" />
+                  <span class="news-listen__text"><span class="news-serif news-listen__ti">{{ item.story.headline }}</span><span class="news-src">{{ [item.story.source, newsLength(item.story)].filter(Boolean).join(' · ') }}</span></span>
+                  <span v-if="listening !== item.story.id" class="news-listen__go" aria-hidden="true"><UiIcon name="Play" :size="16" /></span>
                 </button>
-                <audio v-if="listening" class="news-listen__audio" :src="paper.pages.media.listen.audioUrl" controls autoplay preload="none" />
+                <audio v-if="listening === item.story.id" class="news-listen__audio" :src="item.story.audioUrl" controls autoplay preload="none" />
               </div>
-              <a v-else class="news-box news-listen" :href="paper.pages.media.listen.url" target="_blank" rel="noopener noreferrer" :aria-label="`Listen to ${paper.pages.media.listen.headline}`">
-                <UiIcon name="Headphones" :size="24" />
-                <span class="news-listen__text"><span class="news-serif news-listen__ti">{{ paper.pages.media.listen.headline }}</span><span class="news-src">{{ [paper.pages.media.listen.source, newsLength(paper.pages.media.listen)].filter(Boolean).join(' · ') }}</span></span>
+              <a v-else class="news-box news-listen" :class="{ 'news-listen-box--strip': item.strip }" :href="item.story.url" target="_blank" rel="noopener noreferrer" :aria-label="`Listen to ${item.story.headline}`">
+                <UiIcon name="Headphones" :size="item.strip ? 20 : 24" />
+                <span class="news-listen__text"><span class="news-serif news-listen__ti">{{ item.story.headline }}</span><span class="news-src">{{ [item.story.source, newsLength(item.story)].filter(Boolean).join(' · ') }}</span></span>
                 <span class="news-listen__go" aria-hidden="true"><UiIcon name="Play" :size="16" /></span>
               </a>
             </template>
@@ -141,7 +150,7 @@ const endLine = computed(() => {
               <NewsPhoto :id="story.id" :src="story.image" :height="170" />
               <span v-if="story.tag" class="news-tag">{{ story.tag }}</span>
               <span class="news-topic__ti">{{ story.headline }}</span>
-              <span class="news-src news-by">{{ story.source }}</span>
+              <span class="news-meta"><span class="news-src news-by">{{ story.source }}</span><span v-if="story.feeling" class="news-feel">{{ newsFeelingTag(story) }}</span></span>
               <span v-if="newsSharedLine(story)" class="news-src news-shared">{{ newsSharedLine(story) }}</span>
             </a>
           </template>
@@ -156,12 +165,17 @@ const endLine = computed(() => {
             <span class="news-end__big" aria-hidden="true">🗞️</span>
             <span class="news-serif news-end__ti">That’s your news.</span>
             <span class="news-dek news-end__dek">{{ endLine }}</span>
-            <span class="news-src news-end__ask">How was today’s?</span>
+            <div v-if="bowl.length" class="news-bowl" role="group" aria-label="What’s in today’s bowl">
+              <h3 class="news-bowl__h">What’s in today’s bowl</h3>
+              <div v-for="line in bowl" :key="line.label" class="news-bowl__ln" :class="{ 'is-strong': line.strong, 'is-quiet': line.quiet }"><span>{{ line.label }}</span><b>{{ line.value }}</b></div>
+            </div>
+            <span class="news-src news-end__ask">How did it taste?</span>
             <div class="news-rate">
-              <button v-for="rating in ratings" :key="rating.id" type="button" :class="{ 'is-on': paper.rating === rating.id }" :aria-label="rating.label" :aria-pressed="paper.rating === rating.id" @click="emit('rate', rating.id)">{{ rating.emoji }}</button>
+              <button v-for="rating in ratings" :key="rating.id" type="button" :class="{ 'is-on': paper.rating === rating.id }" :aria-pressed="paper.rating === rating.id" @click="emit('rate', rating.id)"><span aria-hidden="true">{{ rating.emoji }}</span>{{ rating.label }}</button>
             </div>
             <Button color="neutral" shape="pill" class="news-end__done" @click="emit('done')">Done</Button>
             <span class="news-src">Ask ME3 “more about …” any time.</span>
+            <span class="news-src news-soupfoot">Cooked by ME3 from <b>The Human Soup</b>, made by real people.<a href="https://thehumansoup.ai" target="_blank" rel="noopener noreferrer">Pick your own sources at thehumansoup.ai ↗</a></span>
           </div>
         </div>
         <button v-if="index > 0" type="button" class="news-edge news-edge--l" aria-label="Previous page" tabindex="-1" @click="go(index - 1)" />
@@ -256,8 +270,23 @@ button.news-listen { width: 100%; padding: 0; border: 0; background: none; font:
 .news-end__ti { font-size: 30px; font-weight: 800; line-height: 1.1; }
 .news-end__dek { max-width: 280px; }
 .news-end__ask { margin-top: 10px; }
-.news-rate { display: flex; gap: 10px; }
-.news-rate button { width: 64px; height: 64px; padding: 0; border: 0; border-radius: 50%; background: var(--ui-surface-muted); font-size: 30px; cursor: pointer; }
+.news-rate { display: flex; gap: 8px; align-self: stretch; }
+.news-rate button { flex: 1; display: flex; flex-direction: column; align-items: center; gap: 2px; padding: 10px 4px; border: 0; border-radius: 14px; background: var(--ui-surface-muted); color: var(--ui-text); font: inherit; font-size: 13px; cursor: pointer; }
+.news-rate button span { font-size: 24px; line-height: 1.1; }
+.news-rate button.is-on { font-weight: 650; }
+/* The food label: a box like the one on a tin, counts only. */
+.news-bowl { align-self: stretch; display: flex; flex-direction: column; margin-top: 12px; padding: 10px 12px; border: 2px solid var(--ui-text); text-align: left; font-size: 13px; }
+.news-bowl__h { margin: 0 0 4px; padding-bottom: 2px; border-bottom: 6px solid var(--ui-text); font-size: 18px; font-weight: 800; }
+.news-bowl__ln { display: flex; justify-content: space-between; gap: 12px; padding: 3px 0; border-bottom: 1px solid var(--ui-border); }
+.news-bowl__ln:last-child { border-bottom: 0; }
+.news-bowl__ln.is-strong { border-bottom: 3px solid var(--ui-text); font-weight: 650; }
+.news-bowl__ln.is-quiet { color: var(--ui-text-muted); }
+.news-bowl__ln.is-quiet b { font-weight: 500; }
+.news-strip__h { margin: 18px 0 0; font-weight: 650; }
+.news-listen-box--strip { margin-top: 8px; }
+.news-listen-box--strip .news-listen__ti { font-size: 14.5px; }
+.news-soupfoot { display: flex; flex-direction: column; gap: 4px; align-items: center; margin-top: 14px; }
+.news-soupfoot a { color: var(--ui-accent-strong, var(--ui-accent)); font-weight: 600; text-decoration: none; }
 .news-rate button.is-on { box-shadow: inset 0 0 0 2px var(--ui-text); }
 .news-end__done { align-self: stretch; margin-top: 18px; }
 </style>

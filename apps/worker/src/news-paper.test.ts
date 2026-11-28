@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { newsPatchFromAgent } from "./agent-soup";
-import { cleanSummary, clockTime, countPaper, layoutPaper, noteAddsSomething, newsBuildDue, newsDueMinutes, newsFromSearch, readPaperPicks, sameEvent, shouldBuildPaper, toNewsCandidates, writeNewsPicks } from "./news-paper";
+import { bowlFor, cleanSummary, clockTime, countPaper, layoutPaper, paperPieces, noteAddsSomething, newsBuildDue, newsDueMinutes, newsFromSearch, readPaperPicks, sameEvent, shouldBuildPaper, toNewsCandidates, writeNewsPicks } from "./news-paper";
 import { applyNewsPatch, defaultNewsPrefs, describeNewsSettings, goalsFromMission, newsIsSetUp } from "./news-settings";
 import { newsPrefsFromSoup } from "./news-migrate";
 import { NEWS_PUSH_TITLE, newsPushBody, newsPushDue } from "./news-push";
@@ -420,5 +420,55 @@ describe("shared on X", () => {
     expect(read({ count: 0, handles: ["x"] })).toBeUndefined();
     expect(read({ count: 2 })).toEqual({ count: 2, handles: [] });
     expect(read("many")).toBeUndefined();
+  });
+});
+
+describe("today's bowl (me3-6ptk.16)", () => {
+  const piece = (id: string, medium: "read" | "listen" | "watch", extra: Record<string, unknown> = {}) => ({ id, headline: `Story ${id}`, url: `https://example.com/${id}`, sources: [{ name: `Outlet ${id}`, url: "https://example.com" }], medium, ...extra });
+  const raw = {
+    frontPage: [piece("f1", "read", { feeling: "know" }), piece("f2", "read", { feeling: "hopeful" }), piece("f3", "read", { feeling: "hopeful" }), piece("f4", "read")],
+    byTopic: [{ topic: "surfing", stories: [piece("s1", "read", { feeling: "hopeful" })] }],
+    local: [], media: [],
+    followed: [piece("v1", "listen", { audioUrl: "https://example.com/v1.mp3" }), piece("v2", "listen"), piece("v3", "listen", { audioUrl: "https://example.com/v3.mp3" }), piece("v4", "listen", { audioUrl: "https://example.com/v4.mp3" }), piece("v5", "listen")],
+    skimmed: { fearOutrage: 7, sponsored: 2, aiFiller: 3, sourcesLookedAt: 140 },
+    meta: { considered: 60 },
+  };
+  const taste = (): SoupTaste => ({ ...founderTaste(), news: { ...founderTaste().news!, follows: [{ id: "a" }, { id: "b" }] as never } });
+  const build = (data: unknown = raw) => {
+    const news = readNewsToday(data);
+    const candidates = toNewsCandidates(news, taste());
+    const pages = layoutPaper(candidates, {}, extras)!.pages;
+    return { news, candidates, pages, bowl: bowlFor(pages, candidates, { skimmed: news.skimmed, prefs: taste().news!, sauce: ["ai agents", "surfing"] }) };
+  };
+
+  it("reads Soup's feeling on each story and carries it into the paper", () => {
+    const { news, pages } = build();
+    expect(news.frontPage.map(story => story.feeling)).toEqual(["know", "hopeful", "hopeful", undefined]);
+    expect(pages.front.lead.feeling).toBe("know");
+    expect(readNewsToday({ frontPage: [piece("x", "read", { feeling: "angry" })] }).frontPage[0].feeling).toBeUndefined();
+  });
+
+  it("puts new episodes from followed voices in a Listen strip, ones that play here first", () => {
+    const { pages } = build();
+    expect(pages.media!.listen!.id).toBe("v1");
+    expect(pages.media!.listens!.map(story => story.id)).toEqual(["v3", "v4", "v2"]);
+  });
+
+  it("labels the bowl with real counts", () => {
+    const { pages, bowl } = build();
+    expect(bowl).toMatchObject({ sources: 140, voices: 2, base: ["hopeful", "know"], bigStories: true, sauce: ["AI agents", "Surfing"], videos: 0 });
+    expect(bowl.episodes).toBe(4);
+    expect(bowl.fromSauce).toBe((pages.work?.stories.length || 0) + (pages.topics?.stories.length || 0));
+    expect(bowl.fromVoices).toBe(4);
+    expect(bowl.stories).toBe(paperPieces(pages).filter(story => story.medium === "read").length);
+    expect(bowl.feelings).toEqual({ know: 1, hopeful: 3 });
+    expect(bowl.skimmed).toEqual({ fearOutrage: 7, sponsored: 2, aiFiller: 3, total: 12 });
+  });
+
+  it("says nothing was reported when Soup doesn't send skimmed counts, and counts sources itself", () => {
+    const { bowl } = build({ ...raw, skimmed: undefined });
+    expect(bowl.skimmed).toBeNull();
+    expect(bowl.sources).toBe(10);
+    expect(readNewsToday({ skimmed: { fearOutrage: "lots" } }).skimmed).toBeNull();
   });
 });

@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import NewsPhoto from "./NewsPhoto.vue";
-import { newsSharedLine, type NewsStory } from "../../utils/news";
+import { newsFeelingTag, newsSharedLine, type NewsStory } from "../../utils/news";
 
 // One story in the paper: a serif headline, the source's own short summary, where it came from,
 // and ME3's note only when it has one. Anywhere on the story opens the original. Nothing is rewritten.
@@ -23,7 +23,7 @@ const emit = defineEmits<{ ask: [prompt: string] }>();
         <span class="news-st__ti">{{ story.headline }}</span>
         <span v-if="story.summary && !small" class="news-dek">{{ story.summary }}</span>
       </template>
-      <span class="news-src news-by">{{ story.source }}</span>
+      <span class="news-meta"><span class="news-src news-by">{{ story.source }}</span><span v-if="story.feeling" class="news-feel">{{ newsFeelingTag(story) }}</span></span>
       <span v-if="newsSharedLine(story)" class="news-src news-shared">{{ newsSharedLine(story) }}</span>
     </a>
     <span v-if="story.note" class="news-note">{{ story.note }}</span>
@@ -57,5 +57,8 @@ const emit = defineEmits<{ ask: [prompt: string] }>();
 .news-by { margin-top: 3px; font-size: 11px; font-weight: 650; letter-spacing: .07em; text-transform: uppercase; color: color-mix(in srgb, var(--ui-text) 72%, transparent); }
 .news-note { margin-top: 4px; padding-left: 10px; font-size: 13.5px; line-height: 1.4; color: var(--ui-text-muted); box-shadow: inset 2px 0 0 var(--ui-accent); }
 .news-note::before { content: 'ME3 · '; font-weight: 650; color: var(--ui-accent-strong, var(--ui-accent)); }
+/* The byline, then the feeling the story serves as a small tag. */
+.news-meta { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 8px; }
+.news-feel { padding: 1px 7px; border-radius: 999px; background: var(--ui-surface-muted); color: var(--ui-text-muted); font-size: 11px; white-space: nowrap; }
 .news-serif { font-family: ui-serif, 'New York', Georgia, 'Times New Roman', serif; }
 </style>
