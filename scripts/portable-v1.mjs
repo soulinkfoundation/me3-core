@@ -134,6 +134,8 @@ export const RUNTIME_MIGRATIONS = [
   ["0109_pay_page", "2026-11-16-pay-page-v1"],
   ["0110_pay_directly_holds", "2026-11-17-pay-directly-holds-v1"],
   ["0111_pay_directly_email_matches", "2026-11-17-pay-directly-email-matches-v1"],
+  ["0113_home_settings", "2026-11-18-home-settings-v1"],
+  ["0114_agent_checkout_lines", "2026-11-28-agent-checkout-lines-v1"],
 ];
 
 const VERIFY_TABLES = ["core_runtime_migrations", "d1_migrations"];
@@ -201,6 +203,9 @@ const COPIED_TABLES = [
   "daily_quotes",
   "gratitude_settings",
   "home_layout",
+  "home_settings",
+  // Where the owner is in Show me around, so a moved install doesn't restart the tour.
+  "chat_tour_progress",
   "soup_taste",
   "soup_servings",
   "news_papers",

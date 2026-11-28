@@ -54,3 +54,4 @@ jobs:
           name: move-rehearsal-report
           path: .move-rehearsal/*/report.*
           if-no-files-found: ignore
+          include-hidden-files: true
