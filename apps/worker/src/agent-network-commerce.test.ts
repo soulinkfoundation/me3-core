@@ -19,8 +19,9 @@ vi.mock("stripe", () => {
       create: async (params: Record<string, any>) => {
         const id = `cs_test_${stripeState.sessions.size + 1}`;
         const line = params.line_items[0];
+        const total = params.line_items.reduce((sum: number, item: any) => sum + item.price_data.unit_amount * item.quantity, 0);
         const session = { id, object: "checkout.session", url: `https://checkout.stripe.test/c/${id}`, status: "open", payment_status: "unpaid", payment_intent: null,
-          amount_total: line.price_data.unit_amount * line.quantity, amount_subtotal: line.price_data.unit_amount * line.quantity, currency: line.price_data.currency, metadata: params.metadata, expires_at: params.expires_at };
+          amount_total: total, amount_subtotal: total, currency: line.price_data.currency, metadata: params.metadata, expires_at: params.expires_at };
         stripeState.sessions.set(id, session); stripeState.created.push(params);
         return session;
       },
@@ -49,6 +50,7 @@ const { schedulingTools } = await import("../../../packages/agent/src/tools/sche
 const SELLER_ORIGIN = "https://aoife.example";
 const SPEC_URL = `${SELLER_ORIGIN}/api/agent-commerce/v1/sites/aoife/openapi.json`;
 const SELLER_PROFILE_ID = "cloud-profile-aoife";
+const BUYER_ORIGIN = "https://sam.example";
 const databases: DatabaseSync[] = [];
 const webAuth = { channel: "web" as const, signedInAt: "2026-10-18T09:00:00.000Z" };
 
@@ -115,7 +117,7 @@ function buyer() {
   for (const [name, value] of [["ME3_CLOUD_OWNER_ID", "cloud-owner-sam"], ["ME3_CORE_INSTALL_ID", "core_00000000-0000-0000-0000-000000000001"], ["ME3_CLOUD_CORE_TOKEN", "cloud-core-token"]]) {
     raw.prepare("INSERT INTO install_secrets (name, value) VALUES (?, ?)").run(name, value);
   }
-  const env = { DB: db, ENVIRONMENT: "test", ME3_DEPLOYMENT_MODE: "self_hosted", TOKEN_ENCRYPTION_KEY: "buyer-install-key", ME3_CLOUD_API_ORIGIN: "https://api.me3.test" } as unknown as Env;
+  const env = { DB: db, ENVIRONMENT: "test", ME3_DEPLOYMENT_MODE: "self_hosted", TOKEN_ENCRYPTION_KEY: "buyer-install-key", ME3_CLOUD_API_ORIGIN: "https://api.me3.test", CORE_API_ORIGIN: BUYER_ORIGIN } as unknown as Env;
   return { raw, env };
 }
 
@@ -160,6 +162,8 @@ function journey(options: { search?: () => ReturnType<typeof searchResponse> } =
       }
       return response;
     }
+    // The seller telling the buyer's installation that a checkout settled.
+    if (url.startsWith(`${BUYER_ORIGIN}/`)) return app.fetch(new Request(url, init), buyerSide.env);
     return Response.json({ error: "Not found" }, { status: 404 });
   });
   const services = { people: createPeopleSearchToolServices(buyerSide.env, "owner") as never, payments: { ...createAgentPaymentServices(buyerSide.env, "owner"), ...createAgentNetworkPaymentServices(buyerSide.env, "owner") } };
@@ -431,6 +435,111 @@ describe("network commerce journey (two installations)", () => {
     expect(result.data).toMatchObject({ payment: { status: "paid", receipt: { source: "seller", mismatch: true } }, next: expect.stringMatching(/different amount/) });
     expect(result.data.payment.receipt.amount).not.toBe("60.00");
     expect((j.buyer.raw.prepare("SELECT content FROM assistant_messages").get() as { content: string }).content).toMatch(/but you approved €60\.00/);
+  });
+});
+
+// Failure modes (me3-s3wi): two approvals or two payments for one purchase from one
+// seller, a paid purchase that waits for the next sweep, and a notice that fakes a
+// payment or carries the status secret.
+describe("several items from one seller (me3-s3wi)", () => {
+  const items = (slotStart: string) => [{ offeringId: "service:coaching", slotStart }, { offeringId: "product:clarity-kit" }];
+  async function proposeBoth(j: Journey, slotStart: string) {
+    const args = { profileId: SELLER_PROFILE_ID, items: items(slotStart), purpose: "A session and the kit" };
+    const pending = await j.run(PAYMENT_PROPOSE_NETWORK_TOOL, args);
+    expect(pending.status).toBe("needs_approval");
+    const card = pending.approval;
+    await recordPaymentDecision(j.buyer.env, "owner", { id: `approval-${card.proposalId}`, tool_name: PAYMENT_PROPOSE_NETWORK_TOOL, card_json: JSON.stringify(card) }, "approved", webAuth);
+    return { card, resume: () => j.run(PAYMENT_PROPOSE_NETWORK_TOOL, args, { approved: true, approvalData: card }) };
+  }
+  /** Stripe sends the owner's browser back to the seller after paying. */
+  async function stripeReturns(j: Journey) {
+    const returnUrl = String(stripeState.created.at(-1)!.success_url).replace("{CHECKOUT_SESSION_ID}", [...stripeState.sessions.keys()].at(-1)!);
+    return app.fetch(new Request(returnUrl, { headers: { "cf-connecting-ip": "203.0.113.50" } }), j.seller.env);
+  }
+
+  it("takes one approval, one checkout and one payment, and records it when the seller says it is paid", async () => {
+    const j = journey();
+    const { slot } = await searchAndCheck(j);
+    const { card, resume } = await proposeBoth(j, slot.start);
+
+    // One approval for the total, naming every line.
+    expect(card).toMatchObject({ method: "in_network", amount: "109.00", currency: "EUR", sharesNotice: "Shares your name and email with Aoife." });
+    expect(card.items.map((item: any) => item.name)).toEqual(["Coaching session", "Clarity Kit"]);
+    expect(card.items[0].options).toContain("Europe/Dublin");
+    expect(j.buyer.raw.prepare("SELECT COUNT(*) AS n FROM agent_payment_proposals").get()).toEqual({ n: 1 });
+
+    // One seller checkout and one Stripe session for both.
+    const handed = await resume();
+    expect(handed).toMatchObject({ status: "ok", data: { outcome: "checkout_ready", proposal: { status: "handed_over", amount: "109.00" } } });
+    expect(handed.data.proposal.network.lines.map((line: any) => line.offering.title)).toEqual(["Coaching session", "Clarity Kit"]);
+    expect(j.sellerCheckouts()).toHaveLength(1);
+    expect(stripeState.created).toHaveLength(1);
+    expect(stripeState.created[0].line_items).toHaveLength(2);
+
+    // The owner pays; Stripe returns to the seller, who tells the buyer. No sweep runs.
+    await ownerPays(j, handed.data.handOver.openUrl);
+    expect((await stripeReturns(j)).status).toBe(200);
+    const { payment, audit } = await getPayment(j.buyer.env, "owner", card.proposalId);
+    expect(payment).toMatchObject({ status: "paid", receipt: { amount: "109.00", currency: "EUR", source: "seller", mismatch: false },
+      network: { checkoutStatus: "paid", calendarEventId: `network-purchase-${card.proposalId}`, payUrl: null } });
+    expect(audit.map(entry => entry.event)).toEqual(["proposed", "approved", "handed_over", "receipt_recorded", "network_paid"]);
+    expect(j.buyer.raw.prepare("SELECT title, starts_at FROM user_calendar_events").all()).toEqual([{ title: "Coaching session with Aoife", starts_at: slot.start }]);
+    const message = j.buyer.raw.prepare("SELECT content FROM assistant_messages WHERE thread_id='thread'").get() as { content: string };
+    expect(message.content).toMatch(/^Paid Aoife €109\.00: Coaching session on .+ at \d\d:\d\d and Clarity Kit\. The booking is in your calendar\.$/);
+
+    // The seller holds one booking and one paid order from the single payment.
+    expect(j.seller.raw.prepare("SELECT COUNT(*) AS n FROM bookings WHERE status='confirmed'").get()).toEqual({ n: 1 });
+    expect(j.seller.raw.prepare("SELECT status FROM commerce_orders").all()).toEqual([{ status: "paid" }]);
+
+    // The notice named the checkout and nothing secret.
+    const notice = j.requests.filter(request => request.url.startsWith(`${BUYER_ORIGIN}/`));
+    expect(notice).toHaveLength(1);
+    expect(notice[0].url).toMatch(new RegExp(`^${BUYER_ORIGIN}/api/network-purchases/${card.proposalId}/notify/[A-Za-z0-9_-]{40,}$`));
+    for (const secret of j.secrets) expect(JSON.stringify(j.requests)).not.toContain(secret);
+  });
+
+  it("does not believe a notice: an unpaid checkout stays unpaid, and a wrong token is not found", async () => {
+    const j = journey();
+    const { slot } = await searchAndCheck(j);
+    const { card, resume } = await proposeBoth(j, slot.start);
+    await resume();
+    const sent = j.requests.find(request => request.method === "POST" && request.url.endsWith("/checkouts"))!;
+    expect(sent).toBeTruthy();
+    const row = j.sellerCheckouts()[0];
+    const notify = String(row.notify_url);
+    const claim = { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ checkoutId: row.id, status: "paid" }) };
+
+    expect((await app.fetch(new Request(notify, claim), j.buyer.env)).status).toBe(204);
+    expect((await getPayment(j.buyer.env, "owner", card.proposalId)).payment).toMatchObject({ status: "handed_over", receipt: null, network: { checkoutStatus: "pending" } });
+
+    expect((await app.fetch(new Request(notify.replace(/[^/]+$/, "x".repeat(43)), claim), j.buyer.env)).status).toBe(404);
+    expect((await app.fetch(new Request(notify.replace(card.proposalId, "00000000-0000-0000-0000-000000000000"), claim), j.buyer.env)).status).toBe(404);
+  });
+
+  it("tells the buyer when a single item is paid on the seller's own return page", async () => {
+    const j = journey();
+    const { slot } = await searchAndCheck(j);
+    const { card, resume } = await proposeAndApprove(j, slot.start);
+    const handed = await resume();
+    await ownerPays(j, handed.data.handOver.openUrl);
+    const sessionId = [...stripeState.sessions.keys()][0];
+    const done = await app.fetch(new Request(`${SELLER_ORIGIN}/api/book/aoife/complete-checkout`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ sessionId }) }), j.seller.env);
+    expect(done.status).toBe(200);
+    expect((await getPayment(j.buyer.env, "owner", card.proposalId)).payment).toMatchObject({ status: "paid", network: { checkoutStatus: "paid" } });
+  });
+
+  it("proposes classes, free offerings and other currencies on their own", async () => {
+    const j = journey();
+    const { slot } = await searchAndCheck(j);
+    const profile = sellerProfile();
+    (profile.products as any[])[0].currency = "USD";
+    j.seller.setProfile(profile);
+    const refused = await j.run(PAYMENT_PROPOSE_NETWORK_TOOL, { profileId: SELLER_PROFILE_ID, items: items(slot.start), purpose: "Both" });
+    expect(refused.status).toBe("error");
+    expect(refused.error).toContain("same currency");
+    expect(j.buyer.raw.prepare("SELECT COUNT(*) AS n FROM agent_payment_proposals").get()).toEqual({ n: 0 });
+    const both = await j.run(PAYMENT_PROPOSE_NETWORK_TOOL, { profileId: SELLER_PROFILE_ID, offeringId: "service:coaching", items: items(slot.start), purpose: "Both" });
+    expect(both.error).toContain("offeringId or items");
   });
 });
 

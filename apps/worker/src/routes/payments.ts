@@ -1,9 +1,15 @@
-import { refreshNetworkPurchase } from "../agent-network-commerce";
+import { receiveNetworkPurchaseNotice, refreshNetworkPurchase } from "../agent-network-commerce";
 import { PaymentError, getPayment, getPaymentLimits, listPayments, markPaymentNotPaid, recordPaymentReceipt, savePaymentLimits } from "../agent-payments";
 import type { AppContext, AppHono, OwnerRouteDeps } from "../http/types";
 
 /** Owner-facing payments: history, receipts and spend limits. ME3 never charges from these routes. */
 export function registerPaymentRoutes(app: AppHono, deps: OwnerRouteDeps) {
+  // Public: a seller says one of this owner's network checkouts settled. The token in the
+  // address is the only way in, the body is ignored, and ME3 asks the seller itself before recording anything.
+  app.post("/api/network-purchases/:id/notify/:token", async c => {
+    const known = await receiveNetworkPurchaseNotice(c.env, c.req.param("id"), c.req.param("token"));
+    return known ? c.body(null, 204) : c.json({ error: "Not found" }, 404);
+  });
   app.use("/api/payments/*", async (c, next) => {
     const owner = await deps.requireOwner(c); if (!owner) return deps.unauthorized(c);
     c.header("Cache-Control", "private, no-store");

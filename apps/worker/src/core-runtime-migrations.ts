@@ -1081,6 +1081,16 @@ const runtimeMigrations: RuntimeMigration[] = [
       await db.batch(HOME_SETTINGS_SCHEMA.map(sql => db.prepare(sql)));
     },
   },
+  // Agent checkout with several lines, and the buyer address a seller tells on settlement (me3-s3wi).
+  {
+    id: "0114_agent_checkout_lines",
+    checksum: "2026-11-28-agent-checkout-lines-v1",
+    async apply(db) {
+      await addColumnIfMissing(db, "agent_commerce_checkouts", "lines_json", "TEXT");
+      await addColumnIfMissing(db, "agent_commerce_checkouts", "notify_url", "TEXT");
+      await addColumnIfMissing(db, "agent_network_purchases", "lines_json", "TEXT");
+    },
+  },
 ];
 
 // Keyed by database, not module-wide: a shared runtime serves many owners' databases from one isolate.

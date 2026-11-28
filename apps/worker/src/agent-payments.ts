@@ -103,6 +103,12 @@ export type PaymentScope = { threadId: string; turnId: string; idempotencyKey: s
 export type NetworkProposalDetails = {
   sellerProfileId: string | null; sellerHandle: string | null; apiBase: string; offeringId: string; offeringKind: string; offeringTitle: string;
   slotStart: string | null; slotEnd: string | null; slotRequired: boolean; timezone: string | null; quantity: number; unitAmountMinor: number; buyerName: string; buyerEmail: string;
+  /** Every line when one checkout covers several offerings; the fields above are then the first line. */
+  lines?: NetworkLineDetails[];
+};
+export type NetworkLineDetails = {
+  offeringId: string; offeringKind: string; offeringTitle: string; slotStart: string | null; slotEnd: string | null; slotRequired: boolean;
+  timezone: string | null; quantity: number; unitAmountMinor: number | null;
 };
 export type PaymentAuth = { channel: "web"; signedInAt: string } | { channel: "mobile"; deviceAuthentication: "biometric" | "passcode" };
 
@@ -119,6 +125,8 @@ export type NetworkPurchaseRow = {
   encrypted_status_secret: string | null; checkout_status: string; live_amount_minor: number | null; live_currency: string | null; expires_at: string | null;
   reference_type: string | null; reference_id: string | null; calendar_event_id: string | null; last_checked_at: string | null; next_check_at: string | null;
   check_error: string | null; created_at: string; updated_at: string;
+  /** Set when one checkout covers several offerings (me3-s3wi). */
+  lines_json: string | null;
 };
 type ReceiptRow = {
   proposal_id: string; amount_minor: number; currency: string; order_reference: string | null; paid_at: string | null;
@@ -197,9 +205,23 @@ async function sha256(text: string): Promise<string> {
   return [...new Uint8Array(digest)].map(byte => byte.toString(16).padStart(2, "0")).join("");
 }
 
+/** What a network purchase buys: one line, or several from the same seller in one checkout. */
+export function networkLines(row: NetworkPurchaseRow): NetworkLineDetails[] {
+  if (row.lines_json) {
+    try {
+      const lines = JSON.parse(row.lines_json) as NetworkLineDetails[];
+      if (Array.isArray(lines) && lines.length) return lines;
+    } catch { /* fall back to the single-offering columns */ }
+  }
+  return [{ offeringId: row.offering_id, offeringKind: row.offering_kind, offeringTitle: row.offering_title, slotStart: row.slot_start, slotEnd: row.slot_end,
+    slotRequired: row.slot_required === 1, timezone: row.timezone, quantity: row.quantity, unitAmountMinor: null }];
+}
+
 function networkView(row: NetworkPurchaseRow) {
   // The checkout status secret never leaves the server: not in views, tool results or the web.
   return {
+    lines: networkLines(row).map(line => ({ offering: { id: line.offeringId, kind: line.offeringKind, title: line.offeringTitle },
+      slot: line.slotStart ? { start: line.slotStart, end: line.slotEnd, timezone: line.timezone } : null, quantity: line.quantity })),
     seller: { name: row.seller_name, handle: row.seller_handle, profileId: row.seller_profile_id },
     offering: { id: row.offering_id, kind: row.offering_kind, title: row.offering_title },
     slot: row.slot_start ? { start: row.slot_start, end: row.slot_end, timezone: row.timezone } : null,

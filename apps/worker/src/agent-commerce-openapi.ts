@@ -29,6 +29,8 @@ export function buildAgentCommerceOpenApi(input: { serverUrl: string; siteName: 
         `Booking slots are held for ${AGENT_CHECKOUT_HOLD_MINUTES} minutes. Opening payUrl inside the hold keeps the slot until the payment page closes.`,
         "All amounts are integers in the currency's minor unit (6000 means 60.00).",
         "Retry a checkout with the same idempotencyKey to get the same checkout back.",
+        "Several one-to-one bookings and products go in one checkout as lines: one hold window, one payment.",
+        "Send notify.url to be told when a checkout settles; the notice is only a prompt to read the checkout with its statusSecret.",
       ].join(" "),
     },
     servers: [{ url: input.serverUrl }],
@@ -48,6 +50,15 @@ export function buildAgentCommerceOpenApi(input: { serverUrl: string; siteName: 
                     required: ["offerings"],
                     properties: {
                       offerings: { type: "array", items: { $ref: "#/components/schemas/Offering" } },
+                      checkout: {
+                        type: "object",
+                        description: "What createCheckout takes beyond one offering. Absent on older sites: one offering per checkout, no notify.",
+                        properties: {
+                          maxLines: { type: "integer", description: "How many lines one checkout takes." },
+                          lineKinds: { type: "array", items: { type: "string", enum: ["booking", "product"] }, description: "Offering kinds that can share a checkout. Others, and free offerings, are checked out on their own." },
+                          notify: { type: "boolean" },
+                        },
+                      },
                     },
                   },
                 },
@@ -196,9 +207,33 @@ export function buildAgentCommerceOpenApi(input: { serverUrl: string; siteName: 
         },
         CheckoutRequest: {
           type: "object",
-          required: ["offeringId", "buyer", "expectedAmount", "expectedCurrency", "idempotencyKey"],
+          required: ["buyer", "expectedAmount", "expectedCurrency", "idempotencyKey"],
+          description: "Send offeringId (with slot and quantity) for one offering, or lines for several. Never both.",
           properties: {
             offeringId: { type: "string" },
+            lines: {
+              type: "array",
+              minItems: 1,
+              description: "Several paid one-to-one bookings and products in one checkout and one payment, all in one currency. See checkout.maxLines and checkout.lineKinds on listOfferings; anything else is refused with line_not_supported.",
+              items: {
+                type: "object",
+                required: ["offeringId"],
+                properties: {
+                  offeringId: { type: "string" },
+                  slot: {
+                    type: "object",
+                    required: ["start"],
+                    properties: { start: { type: "string", format: "date-time" }, end: { type: "string", format: "date-time" } },
+                  },
+                },
+              },
+            },
+            notify: {
+              type: "object",
+              required: ["url"],
+              description: "A public https address the seller POSTs {checkoutId, status} to when the checkout is paid or cancelled, unless a status read already told the buyer. It carries no secret and proves nothing: read the checkout with its statusSecret before acting.",
+              properties: { url: { type: "string", format: "uri", maxLength: 500 } },
+            },
             slot: {
               type: "object",
               required: ["start"],
@@ -221,7 +256,7 @@ export function buildAgentCommerceOpenApi(input: { serverUrl: string; siteName: 
             expectedAmount: {
               type: "integer",
               minimum: 0,
-              description: "The total the buyer approved in minor units: offering amount times quantity. A different live price is refused with price_changed.",
+              description: "The total the buyer approved in minor units: offering amount times quantity, or the sum of the lines. A different live price is refused with price_changed.",
             },
             expectedCurrency: { type: "string", pattern: "^[A-Za-z]{3}$" },
             idempotencyKey: { type: "string", minLength: 8, maxLength: 200 },
@@ -265,6 +300,23 @@ export function buildAgentCommerceOpenApi(input: { serverUrl: string; siteName: 
             paidAmount: { type: ["integer", "null"] },
             paidCurrency: { type: ["string", "null"] },
             paidAt: { type: ["string", "null"], format: "date-time" },
+            lines: {
+              type: "array",
+              description: "Only on a checkout with several lines; offeringId, kind, slot and reference above then describe the first. status, amount and paidAmount cover all of them. cancelled means every line was cancelled or refunded.",
+              items: {
+                type: "object",
+                required: ["offeringId", "kind", "title", "quantity", "slot", "amount", "reference"],
+                properties: {
+                  offeringId: { type: "string" },
+                  kind: { type: "string", enum: ["booking", "product"] },
+                  title: { type: "string" },
+                  quantity: { type: "integer" },
+                  slot: { type: ["object", "null"], properties: { start: { type: "string", format: "date-time" }, end: { type: "string", format: "date-time" } } },
+                  amount: { type: "integer" },
+                  reference: { type: ["object", "null"], properties: { type: { type: "string", enum: ["booking", "order"] }, id: { type: "string" } } },
+                },
+              },
+            },
           },
         },
         CreatedCheckout: {
@@ -287,7 +339,7 @@ export function buildAgentCommerceOpenApi(input: { serverUrl: string; siteName: 
             error: { type: "string" },
             code: {
               type: "string",
-              description: "For example invalid_request, offering_not_found, price_changed, slot_unavailable, idempotency_conflict, agent_checkout_disabled, commerce_unavailable, rate_limited.",
+              description: "For example invalid_request, offering_not_found, price_changed, slot_unavailable, line_not_supported, idempotency_conflict, agent_checkout_disabled, commerce_unavailable, rate_limited.",
             },
             amount: { type: "integer", description: "With price_changed: the current total." },
             currency: { type: "string" },

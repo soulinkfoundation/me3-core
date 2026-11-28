@@ -160,24 +160,39 @@ export function paymentTools(): AgentTool[] {
 
   const proposeNetwork = paymentTool({
     name: "core_payments_propose_network",
-    description: "Propose buying an offering from another ME3 site for the owner to approve. ME3 reads the live price and time from the seller; after approval it asks the seller to hold it and gives the owner the seller's checkout to pay. Shares the owner's name and email with the seller. When other good options exist, mention them too.",
+    description: "Propose buying from another ME3 site for the owner to approve. ME3 reads the live price and time from the seller; after approval it asks the seller to hold it and gives the owner the seller's checkout to pay. Shares the owner's name and email with the seller. When the owner wants several things from the same seller (a session and a product, say), send them all in items in ONE call: one approval and one payment. Never call this twice for one seller in the same request unless it tells you an item must be proposed on its own. When other good options exist, mention them too.",
     parameters: objectSchema({
       profileId: { type: "string", minLength: 1, description: "Stable profileId from core_people_search." },
-      offeringId: { type: "string", minLength: 1, description: "Offering id checked with core_payments_network_check." },
+      offeringId: { type: "string", minLength: 1, description: "Offering id checked with core_payments_network_check. For one offering; use items for several." },
       slotStart: { type: "string", description: "Exact slot start from core_payments_network_check, for bookings and class sessions." },
       quantity: { type: "integer", minimum: 1, maximum: 100, description: "Number of places, for classes and events. Defaults to 1." },
+      items: { type: "array", minItems: 1, maxItems: 5, description: "Several offerings from this seller in one checkout, instead of offeringId. One-to-one bookings and products only; classes, retreats and free offerings are proposed on their own.",
+        items: objectSchema({ offeringId: { type: "string", minLength: 1, description: "Offering id checked with core_payments_network_check." }, slotStart: { type: "string", description: "Exact slot start, for bookings." } }, ["offeringId"]) },
       purpose: { type: "string", minLength: 1, maxLength: 500, description: "Why the owner is buying this, in their words." },
-    }, ["profileId", "offeringId", "purpose"]),
+    }, ["profileId", "purpose"]),
     effect: "external", approval: "required", pluginId: null,
     async run(args, context) {
       const payments = services(context).payments!;
       if (!payments.proposeNetwork || !payments.handOverNetwork) throw new Error("Network purchases are unavailable.");
-      const profileId = requiredString(args.profileId, "Profile ID"), offeringId = requiredString(args.offeringId, "Offering ID");
+      const profileId = requiredString(args.profileId, "Profile ID");
+      const several = Array.isArray(args.items);
+      if (several && args.offeringId !== undefined) throw new Error("Send offeringId or items, not both.");
+      const offeringIds = several
+        ? (args.items as unknown[]).map(item => requiredString((item as { offeringId?: unknown } | null)?.offeringId, "Offering ID"))
+        : [requiredString(args.offeringId, "Offering ID")];
       // A resumed approval reuses the saved proposal, so it does not need the search again.
-      const seller = context.approved ? null : (await rememberedSeller(context, profileId, offeringId)).seller;
-      if (!context.approved && !seller) throw new Error("This seller does not take agent checkouts for this offering. Give the owner the seller's page link instead.");
-      const proposal = await payments.proposeNetwork({ seller, offeringId, slotStart: args.slotStart, quantity: args.quantity, purpose: args.purpose }, { threadId: context.threadId, turnId: context.turnId, idempotencyKey: context.idempotencyKey });
-      const network = proposal.network as { seller: { name: string }; slot: unknown; offering: unknown; sharesWith: { name: string; email: string } } | null;
+      let seller: NetworkSellerRef | null = null;
+      if (!context.approved) {
+        for (const offeringId of offeringIds) {
+          const remembered = (await rememberedSeller(context, profileId, offeringId)).seller;
+          if (!remembered) throw new Error(`This seller does not take agent checkouts for ${several ? offeringId : "this offering"}. Give the owner the seller's page link instead.`);
+          if (seller && remembered.specUrl !== seller.specUrl) throw new Error("These offerings are not sold through the same checkout. Propose them separately.");
+          seller ??= remembered;
+        }
+      }
+      const proposal = await payments.proposeNetwork(several ? { seller, items: args.items, purpose: args.purpose } : { seller, offeringId: offeringIds[0], slotStart: args.slotStart, quantity: args.quantity, purpose: args.purpose },
+        { threadId: context.threadId, turnId: context.turnId, idempotencyKey: context.idempotencyKey });
+      const network = proposal.network as { seller: { name: string }; slot: unknown; offering: unknown; lines: unknown; sharesWith: { name: string; email: string } } | null;
       if (!network) throw new Error("This proposal is not a network purchase.");
       if (!context.approved) {
         const limits = await payments.limits(proposal.currency);
@@ -186,7 +201,7 @@ export function paymentTools(): AgentTool[] {
           kind: "payment", requiresFreshAuthentication: true, proposalId: proposal.id, proposalHash: proposal.proposalHash,
           merchant: proposal.merchant, purpose: proposal.purpose, items: proposal.items, amount: proposal.amount, currency: proposal.currency,
           amountMinor: proposal.amountMinor, method: "in_network", checkoutUrl: null, checkoutDomainDiffers: false, refundPolicy: proposal.refundPolicy, limits,
-          network: { seller: network.seller, offering: network.offering, slot: network.slot, sharesWith: network.sharesWith, holdMinutes: 15 },
+          network: { seller: network.seller, offering: network.offering, slot: network.slot, lines: network.lines, sharesWith: network.sharesWith, holdMinutes: 15 },
           sharesNotice: `Shares your name and email with ${network.seller.name}.`,
           howItWorks: NETWORK_HOW_IT_WORKS,
         } };

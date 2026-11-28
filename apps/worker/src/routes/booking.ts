@@ -1,3 +1,4 @@
+import { AGENT_CHECKOUT_PURCHASE_KIND, settleAgentCheckoutForSession } from "../agent-commerce";
 import { requestCountry } from "../../../../shared/regional-pricing";
 import Stripe from "stripe";
 import { resolveTimeZone } from "../calendar";
@@ -403,6 +404,8 @@ export function registerBookingRoutes(app: AppHono, { requireOwner, unauthorized
       ? await finalizePaidEventBookingCheckout(c.env, site, session)
       : await finalizePaidBookingCheckout(c.env, site, session);
     if ("error" in result) return c.json({ error: result.error }, result.status as any);
+    // An agent's checkout: its buyer hears now, not at their next check.
+    await settleAgentCheckoutForSession(c.env, site, sessionId);
     return c.json(result);
   });
 
@@ -435,11 +438,17 @@ export function registerBookingRoutes(app: AppHono, { requireOwner, unauthorized
       if (session.payment_status !== "paid") return c.json({ received: true });
       try {
         const result = await finalizeStripeProductCheckout(c.env, site, session);
+        await settleAgentCheckoutForSession(c.env, site, session.id);
         return c.json({ received: true, order: result.order });
       } catch (error) {
         console.error("Stripe product webhook failed:", error);
         return c.json({ received: false, error: "product_checkout_failed" }, 500);
       }
+    }
+    if (session.metadata?.purchase_kind === AGENT_CHECKOUT_PURCHASE_KIND) {
+      // One payment for several lines of an agent checkout; it confirms each line itself.
+      if (session.payment_status === "paid") await settleAgentCheckoutForSession(c.env, site, session.id);
+      return c.json({ received: true });
     }
     if (session.metadata?.purchase_kind !== "booking") {
       return c.json({ received: true });
@@ -452,6 +461,7 @@ export function registerBookingRoutes(app: AppHono, { requireOwner, unauthorized
       console.error("Stripe booking webhook failed:", result.error);
       return c.json({ received: true, error: result.error });
     }
+    await settleAgentCheckoutForSession(c.env, site, session.id);
 
     return c.json({ received: true, booking: result.booking });
   });

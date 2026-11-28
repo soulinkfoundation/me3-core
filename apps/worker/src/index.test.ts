@@ -495,6 +495,8 @@ function createEnv(): Env & {
         "commerce_settings",
         "commerce_orders",
         "commerce_direct_payments",
+        "agent_commerce_checkouts",
+        "agent_network_purchases",
         "content_bank_items",
         "financial_entries",
         "social_packages",

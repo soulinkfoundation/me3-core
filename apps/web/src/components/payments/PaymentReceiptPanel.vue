@@ -96,7 +96,7 @@ watch(() => props.paymentId, load, { immediate: true });
         <div><dt>Items</dt><dd><span v-for="(item, index) in payment.items" :key="index" class="payment-receipt__item">{{ item.quantity }} × {{ item.name }}<template v-if="item.options"> · {{ item.options }}</template></span></dd></div>
         <template v-if="payment.network">
           <div><dt>Seller</dt><dd>{{ payment.network.seller.name }} · ME3 network<template v-if="networkNote"><br><span class="payment-receipt__muted">{{ networkNote }}</span></template></dd></div>
-          <div v-if="payment.network.slot"><dt>When</dt><dd>{{ paymentSlotLabel(payment.network.slot.start, payment.network.slot.timezone) }}</dd></div>
+          <div v-if="payment.network.slot && (payment.network.lines?.length ?? 1) < 2"><dt>When</dt><dd>{{ paymentSlotLabel(payment.network.slot.start, payment.network.slot.timezone) }}</dd></div>
           <div><dt>Shared with seller</dt><dd>{{ payment.network.sharesWith.name }} · {{ payment.network.sharesWith.email }}</dd></div>
           <div v-if="payment.network.reference"><dt>{{ payment.network.reference.type === 'booking' ? 'Booking' : 'Order' }}</dt><dd>{{ payment.network.reference.id }}</dd></div>
         </template>

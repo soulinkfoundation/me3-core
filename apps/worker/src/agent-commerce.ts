@@ -2,7 +2,10 @@ import type { Me3SiteProfile } from "@me3-core/site-renderer";
 import { productDeliveryError, type ProductDelivery } from "../../../shared/product-delivery";
 import { localizeRegionalPrices } from "../../../shared/regional-pricing";
 import { addDaysToDateString, getUtcMsForLocalTime, resolveTimeZone } from "./calendar";
+import { PaymentError, publicHttpsUrl } from "./agent-payments";
 import {
+  appendQueryParams,
+  claimOneToOneBookingHold,
   formatUtcInstantInTimeZone,
   getStripe,
   listAvailableBookingSlots,
@@ -12,6 +15,7 @@ import {
   normalizeEmail,
   normalizeShortText,
   normalizeSiteCheckoutReturnUrl,
+  releaseBookingHold,
   resolvePublicBookingSlot,
   type CoreBookIntent,
   type CoreBookingPricing,
@@ -20,6 +24,7 @@ import {
 } from "./booking";
 import {
   bookFreeOneToOne,
+  checkOneToOneSlotBookable,
   finalizePaidBookingCheckout,
   resolveCheckoutProvider,
   retrieveManagedBookingCheckout,
@@ -32,7 +37,14 @@ import {
   getAgentCheckoutEnabled,
   pruneAgentCommerceRateLimits,
 } from "./agent-commerce-store";
-import { CommerceOrderInputError, completeProductCheckout, createProductCheckout } from "./commerce-orders";
+import { getManagedCommerceBridgeConfig } from "./commerce-bridge";
+import {
+  CommerceOrderInputError,
+  completeProductCheckout,
+  createProductCheckout,
+  failPendingProductOrder,
+  finalizeDeferredProductOrder,
+} from "./commerce-orders";
 import { getDefaultCommerceCurrency, isCommerceReady } from "./commerce-settings";
 import {
   createConfirmedEventBooking,
@@ -75,6 +87,12 @@ const DEFAULT_AVAILABILITY_DAYS = 7;
 export const BUYER_INSTALL_HEADER = "ME3-Buyer-Install";
 /** Attribution on the seller's bookings and orders, beside page and campaign sources. */
 const AGENT_CHECKOUT_CAMPAIGN = "agent-commerce";
+/** One checkout, one payment: several one-to-one bookings and products from this site. */
+export const AGENT_CHECKOUT_MAX_LINES = 5;
+export const AGENT_CHECKOUT_LINE_KINDS = ["booking", "product"] as const;
+/** `purchase_kind` on the payment session of a checkout with several lines. */
+export const AGENT_CHECKOUT_PURCHASE_KIND = "agent_checkout";
+const NOTIFY_TIMEOUT_MS = 4000;
 export const BUYER_INSTALL_AUDIENCE = "me3-agent-commerce";
 const BUYER_INSTALL_MAX_LIFETIME_SECONDS = 15 * 60;
 export const AGENT_COMMERCE_RATE_LIMITS = {
@@ -171,6 +189,35 @@ type AgentCheckoutRow = {
   opened_at: string | null;
   created_at: string;
   updated_at: string;
+  /** Set for a checkout with several lines; the single-offering columns then hold the first line. */
+  lines_json: string | null;
+  /** The buyer's address told when this checkout settles. Carries no authority. */
+  notify_url: string | null;
+};
+
+/** One line of a checkout with several. The hold, offer and order ids stay on the seller. */
+type CheckoutLine = {
+  offeringId: string;
+  kind: "booking" | "product";
+  title: string;
+  amount: number;
+  slotStart: string | null;
+  slotEnd: string | null;
+  offerId?: string;
+  durationMinutes?: number;
+  holdToken?: string;
+  orderId?: string;
+  bookingId?: string;
+};
+
+export type AgentCheckoutLineView = {
+  offeringId: string;
+  kind: "booking" | "product";
+  title: string;
+  quantity: 1;
+  slot: { start: string; end: string } | null;
+  amount: number;
+  reference: { type: "booking" | "order"; id: string } | null;
 };
 
 export type AgentCheckoutView = {
@@ -188,6 +235,8 @@ export type AgentCheckoutView = {
   paidAmount: number | null;
   paidCurrency: string | null;
   paidAt: string | null;
+  /** Present on a checkout with several lines; the fields above then describe the first. */
+  lines?: AgentCheckoutLineView[];
 };
 
 // ---------------------------------------------------------------------------
@@ -547,23 +596,72 @@ function localMidnightMs(date: string, timezone: string): number {
 // ---------------------------------------------------------------------------
 // Checkouts
 
-type CheckoutInput = {
+type CheckoutLineInput = {
   offeringId: string;
-  idempotencyKey: string;
-  buyerName: string;
-  buyerEmail: string;
   quantity: number;
   slotStart: string | null;
   slotEnd: string | null;
-  expectedAmount: number;
-  expectedCurrency: string;
 };
 
-function parseCheckoutInput(value: unknown): CheckoutInput {
-  const body = isRecord(value) ? value : {};
+/** The first line is also spread at the top level, where a single-offering checkout reads it. */
+type CheckoutInput = CheckoutLineInput & {
+  lines: CheckoutLineInput[];
+  idempotencyKey: string;
+  buyerName: string;
+  buyerEmail: string;
+  expectedAmount: number;
+  expectedCurrency: string;
+  notifyUrl: string | null;
+};
+
+function parseCheckoutLine(body: Record<string, unknown>, prefix: string): CheckoutLineInput {
   const invalid = (message: string) => new AgentCommerceError(message, 400, "invalid_request");
   const offeringId = typeof body.offeringId === "string" ? body.offeringId.trim() : "";
-  if (!offeringId || offeringId.length > 200) throw invalid("offeringId is required.");
+  if (!offeringId || offeringId.length > 200) throw invalid(`${prefix}offeringId is required.`);
+  const quantity = body.quantity === undefined || body.quantity === null ? 1 : body.quantity;
+  if (!Number.isSafeInteger(quantity) || (quantity as number) < 1) {
+    throw invalid(`${prefix}quantity must be a positive whole number.`);
+  }
+  let slotStart: string | null = null;
+  let slotEnd: string | null = null;
+  if (body.slot !== undefined && body.slot !== null) {
+    const slot = isRecord(body.slot) ? body.slot : null;
+    slotStart = slot ? normalizeInstant(slot.start) : null;
+    if (!slotStart) throw invalid(`${prefix}slot.start must be an RFC 3339 time from the availability endpoint.`);
+    if (slot?.end !== undefined) {
+      slotEnd = normalizeInstant(slot.end);
+      if (!slotEnd) throw invalid(`${prefix}slot.end must be an RFC 3339 time.`);
+    }
+  }
+  return { offeringId, quantity: quantity as number, slotStart, slotEnd };
+}
+
+function parseCheckoutInput(env: Env, value: unknown): CheckoutInput {
+  const body = isRecord(value) ? value : {};
+  const invalid = (message: string) => new AgentCommerceError(message, 400, "invalid_request");
+  let lines: CheckoutLineInput[];
+  if (body.lines === undefined || body.lines === null) {
+    lines = [parseCheckoutLine(body, "")];
+  } else {
+    if (body.offeringId !== undefined) throw invalid("Send offeringId or lines, not both.");
+    if (!Array.isArray(body.lines) || body.lines.length < 1 || body.lines.length > AGENT_CHECKOUT_MAX_LINES) {
+      throw invalid(`lines must list 1 to ${AGENT_CHECKOUT_MAX_LINES} offerings.`);
+    }
+    lines = body.lines.map((line, index) => parseCheckoutLine(isRecord(line) ? line : {}, `lines[${index}].`));
+    const seen = new Set(lines.map((line) => `${line.offeringId}\n${line.slotStart || ""}`));
+    if (seen.size !== lines.length) throw invalid("Each line must be a different offering or time.");
+  }
+  let notifyUrl: string | null = null;
+  if (body.notify !== undefined && body.notify !== null) {
+    const raw = isRecord(body.notify) ? body.notify.url : null;
+    if (typeof raw !== "string" || raw.length > 500) throw invalid("notify.url must be a public https URL of at most 500 characters.");
+    try {
+      notifyUrl = publicHttpsUrl(raw, "notify.url", env).toString();
+    } catch (error) {
+      if (!(error instanceof PaymentError)) throw error;
+      throw invalid("notify.url must be a public https URL of at most 500 characters.");
+    }
+  }
   const idempotencyKey = typeof body.idempotencyKey === "string" ? body.idempotencyKey : "";
   if (!/^[\x21-\x7e]{8,200}$/.test(idempotencyKey)) {
     throw invalid("idempotencyKey must be 8 to 200 visible ASCII characters.");
@@ -573,38 +671,21 @@ function parseCheckoutInput(value: unknown): CheckoutInput {
   const buyerEmail = normalizeEmail(buyer.email);
   if (!buyerName) throw invalid("buyer.name is required.");
   if (!buyerEmail) throw invalid("buyer.email must be a valid email address.");
-  const quantity = body.quantity === undefined || body.quantity === null ? 1 : body.quantity;
-  if (!Number.isSafeInteger(quantity) || (quantity as number) < 1) {
-    throw invalid("quantity must be a positive whole number.");
-  }
   if (!Number.isSafeInteger(body.expectedAmount) || (body.expectedAmount as number) < 0) {
     throw invalid("expectedAmount must be the total in minor units (for example 6000 for 60.00).");
   }
   const expectedCurrency = currencyCode(body.expectedCurrency);
   if (!expectedCurrency) throw invalid("expectedCurrency must be a three-letter currency code.");
 
-  let slotStart: string | null = null;
-  let slotEnd: string | null = null;
-  if (body.slot !== undefined && body.slot !== null) {
-    const slot = isRecord(body.slot) ? body.slot : null;
-    slotStart = slot ? normalizeInstant(slot.start) : null;
-    if (!slotStart) throw invalid("slot.start must be an RFC 3339 time from the availability endpoint.");
-    if (slot?.end !== undefined) {
-      slotEnd = normalizeInstant(slot.end);
-      if (!slotEnd) throw invalid("slot.end must be an RFC 3339 time.");
-    }
-  }
-
   return {
-    offeringId,
+    ...lines[0],
+    lines,
     idempotencyKey,
     buyerName,
     buyerEmail,
-    quantity: quantity as number,
-    slotStart,
-    slotEnd,
     expectedAmount: body.expectedAmount as number,
     expectedCurrency,
+    notifyUrl,
   };
 }
 
@@ -619,7 +700,7 @@ export async function createAgentCheckout(
   context: AgentCommerceContext,
   body: unknown,
 ): Promise<{ created: boolean; checkout: AgentCheckoutView & { statusSecret: string; statusUrl: string } }> {
-  const input = parseCheckoutInput(body);
+  const input = parseCheckoutInput(env, body);
   const scope = context.caller.installId ? `install:${context.caller.installId}` : "anonymous";
   const requestHash = await sha256Hex(JSON.stringify([
     input.offeringId,
@@ -629,10 +710,14 @@ export async function createAgentCheckout(
     input.buyerEmail,
     input.expectedAmount,
     input.expectedCurrency,
+    // Later additions stay out of the hash when unused, so older retries still match.
+    ...(input.lines.length > 1 ? [input.lines.slice(1).map((line) => [line.offeringId, line.slotStart, line.quantity])] : []),
+    ...(input.notifyUrl ? [input.notifyUrl] : []),
   ]));
 
   const replay = await replayCheckout(env, context, scope, input.idempotencyKey, requestHash);
   if (replay) return replay;
+  if (input.lines.length > 1) return createLinesCheckout(env, context, input, scope, requestHash);
 
   const { offering, target } = await findAgentOffering(env, context, input.offeringId);
   const total = offering.amount * input.quantity;
@@ -659,8 +744,8 @@ export async function createAgentCheckout(
     `INSERT INTO agent_commerce_checkouts
      (id, site_id, idempotency_scope, idempotency_key, request_hash, offering_id, offering_kind,
       buyer_install_id, buyer_name, buyer_email, quantity, slot_start, slot_end, amount_minor,
-      currency, status, expires_at, created_at, updated_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'creating', ?, ?, ?)
+      currency, status, expires_at, created_at, updated_at, notify_url)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'creating', ?, ?, ?, ?)
      ON CONFLICT(site_id, idempotency_scope, idempotency_key) DO NOTHING`,
   )
     .bind(
@@ -682,6 +767,7 @@ export async function createAgentCheckout(
       holdExpiresAt,
       now,
       now,
+      input.notifyUrl,
     )
     .run();
   if (!Number(claimed.meta.changes || 0)) {
@@ -701,14 +787,7 @@ export async function createAgentCheckout(
     await env.DB.prepare("DELETE FROM agent_commerce_checkouts WHERE id = ? AND status = 'creating'")
       .bind(checkoutId)
       .run();
-    if (error instanceof CommerceOrderInputError) {
-      throw new AgentCommerceError(
-        error.message,
-        error.status === 404 ? 404 : error.status === 409 ? 409 : error.status === 503 || error.status === 502 ? 503 : 400,
-        error.status === 409 ? "checkout_refused" : error.status >= 500 ? "commerce_unavailable" : "invalid_request",
-      );
-    }
-    throw error;
+    throw checkoutFailure(error);
   }
 
   await env.DB.prepare(
@@ -738,6 +817,15 @@ export async function createAgentCheckout(
   const row = await loadCheckout(env, context.site.id, checkoutId);
   if (!row) throw new Error("Agent checkout could not be loaded");
   return { created: true, checkout: await withStatusSecret(env, context, row) };
+}
+
+function checkoutFailure(error: unknown): unknown {
+  if (!(error instanceof CommerceOrderInputError)) return error;
+  return new AgentCommerceError(
+    error.message,
+    error.status === 404 ? 404 : error.status === 409 ? 409 : error.status === 503 || error.status === 502 ? 503 : 400,
+    error.status === 409 ? "checkout_refused" : error.status >= 500 ? "commerce_unavailable" : "invalid_request",
+  );
 }
 
 async function replayCheckout(
@@ -771,7 +859,7 @@ async function replayCheckout(
     }
     throw new AgentCommerceError("This checkout is still being created. Retry shortly.", 409, "checkout_in_progress");
   }
-  const refreshed = await refreshCheckout(env, context.site, existing);
+  const refreshed = await refreshCheckout(env, context.site, existing, { notify: false });
   return { created: false, checkout: await withStatusSecret(env, context, refreshed) };
 }
 
@@ -780,7 +868,7 @@ type CheckoutPlan = {
   occurrence: EventOccurrence | null;
 };
 
-function planCheckout(input: CheckoutInput, target: OfferingTarget): CheckoutPlan {
+function planCheckout(input: CheckoutLineInput, target: OfferingTarget): CheckoutPlan {
   const invalidSlot = (message: string) => new AgentCommerceError(message, 400, "invalid_slot");
   if (target.kind === "product") {
     if (input.quantity !== 1) throw new AgentCommerceError("Products are bought one at a time.", 400, "invalid_quantity");
@@ -985,6 +1073,491 @@ async function executeCheckout(
   };
 }
 
+// ---------------------------------------------------------------------------
+// Checkouts with several lines: one hold per booking, one reserved order per
+// product, and one payment session for the total. Classes, retreats and free
+// offerings keep their own checkout.
+
+function parseLines(row: AgentCheckoutRow): CheckoutLine[] | null {
+  if (!row.lines_json) return null;
+  try {
+    const lines = JSON.parse(row.lines_json) as CheckoutLine[];
+    return Array.isArray(lines) && lines.length ? lines : null;
+  } catch {
+    return null;
+  }
+}
+
+async function createLinesCheckout(
+  env: Env,
+  context: AgentCommerceContext,
+  input: CheckoutInput,
+  scope: string,
+  requestHash: string,
+): Promise<{ created: boolean; checkout: AgentCheckoutView & { statusSecret: string; statusUrl: string } }> {
+  const unsupported = (message: string) => new AgentCommerceError(message, 400, "line_not_supported");
+  const offerings = await loadAgentOfferings(env, context.site, context.country);
+  const entries = input.lines.map((line) => {
+    const entry = offerings.find((candidate) => candidate.offering.id === line.offeringId);
+    if (!entry) throw new AgentCommerceError("Offering not found.", 404, "offering_not_found");
+    if (entry.target.kind === "event") {
+      throw unsupported("Classes and retreats are booked on their own. Send them as a separate checkout.");
+    }
+    if (entry.offering.free) {
+      throw unsupported("Free offerings are booked on their own. Send them as a separate checkout.");
+    }
+    return { line, offering: entry.offering, target: entry.target, plan: planCheckout(line, entry.target) };
+  });
+  const currency = entries[0].offering.currency;
+  if (entries.some((entry) => entry.offering.currency !== currency)) {
+    throw unsupported("Every line must be in the same currency. Send the others as a separate checkout.");
+  }
+  const total = entries.reduce((sum, entry) => sum + entry.offering.amount, 0);
+  if (input.expectedCurrency !== currency || input.expectedAmount !== total) {
+    throw new AgentCommerceError(
+      "The price has changed. Check the offerings again and ask the buyer to approve the new price.",
+      409,
+      "price_changed",
+      {
+        amount: total,
+        currency,
+        lines: entries.map((entry) => ({ offeringId: entry.offering.id, amount: entry.offering.amount })),
+      },
+    );
+  }
+  const provider = await resolveCheckoutProvider(env, context.site.user_id);
+  if (!provider) {
+    throw new AgentCommerceError("Payments are not available for this site right now.", 503, "commerce_unavailable");
+  }
+
+  const checkoutId = crypto.randomUUID();
+  const nowMs = Date.now();
+  const now = new Date(nowMs).toISOString();
+  const holdExpiresAt = new Date(nowMs + AGENT_CHECKOUT_HOLD_MINUTES * 60_000).toISOString();
+  const firstSlot = entries.find((entry) => entry.plan.slot)?.plan.slot || null;
+  const claimed = await env.DB.prepare(
+    `INSERT INTO agent_commerce_checkouts
+     (id, site_id, idempotency_scope, idempotency_key, request_hash, offering_id, offering_kind,
+      buyer_install_id, buyer_name, buyer_email, quantity, slot_start, slot_end, amount_minor,
+      currency, status, expires_at, created_at, updated_at, notify_url)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?, ?, ?, 'creating', ?, ?, ?, ?)
+     ON CONFLICT(site_id, idempotency_scope, idempotency_key) DO NOTHING`,
+  )
+    .bind(
+      checkoutId,
+      context.site.id,
+      scope,
+      input.idempotencyKey,
+      requestHash,
+      entries[0].offering.id,
+      entries[0].offering.kind,
+      context.caller.installId,
+      input.buyerName,
+      input.buyerEmail,
+      firstSlot?.startsAt || null,
+      firstSlot?.endsAt || null,
+      total,
+      currency,
+      holdExpiresAt,
+      now,
+      now,
+      input.notifyUrl,
+    )
+    .run();
+  if (!Number(claimed.meta.changes || 0)) {
+    const concurrent = await replayCheckout(env, context, scope, input.idempotencyKey, requestHash);
+    if (concurrent) return concurrent;
+    throw new AgentCommerceError("This checkout is still being created. Retry shortly.", 409, "checkout_in_progress");
+  }
+
+  const lines: CheckoutLine[] = [];
+  let session: { id: string; url: string | null };
+  try {
+    for (const { offering, target, plan } of entries) {
+      const line: CheckoutLine = {
+        offeringId: offering.id,
+        kind: target.kind === "product" ? "product" : "booking",
+        title: offering.title,
+        amount: offering.amount,
+        slotStart: plan.slot?.startsAt || null,
+        slotEnd: plan.slot?.endsAt || null,
+      };
+      if (target.kind === "booking") {
+        const offer = target.offer;
+        const amount = normalizeBookingAmount(offer.pricing?.suggestedAmount, offer.pricing!, currency);
+        if (!amount.ok || amount.amountCents !== offering.amount) {
+          throw new AgentCommerceError(amount.ok ? "The price has changed." : amount.error, 409, "checkout_refused");
+        }
+        const unavailable = await checkOneToOneSlotBookable(env, { siteId: context.site.id, offer, slot: plan.slot! });
+        if (unavailable) {
+          throw new AgentCommerceError(
+            unavailable.error,
+            unavailable.status === 409 ? 409 : 400,
+            unavailable.status === 409 ? "slot_unavailable" : "invalid_slot",
+          );
+        }
+        const holdToken = crypto.randomUUID();
+        const held = await claimOneToOneBookingHold(env, {
+          siteId: context.site.id,
+          offerId: offer.id,
+          holdToken,
+          startsAt: plan.slot!.startsAt,
+          endsAt: plan.slot!.endsAt,
+          expiresAt: holdExpiresAt,
+        });
+        if (!held) {
+          throw new AgentCommerceError(
+            "That time is being held for another checkout. Try another slot or check back shortly.",
+            409,
+            "slot_unavailable",
+          );
+        }
+        lines.push({ ...line, offerId: offer.id, durationMinutes: offer.duration, holdToken });
+      } else if (target.kind === "product") {
+        const order = await createProductCheckout(
+          env,
+          context.site,
+          target.slug,
+          {
+            buyerName: input.buyerName,
+            buyerEmail: input.buyerEmail,
+            expectedAmount: offering.amount,
+            expectedCurrency: currency,
+            campaign: AGENT_CHECKOUT_CAMPAIGN,
+          },
+          context.requestUrl,
+          context.country,
+          { deferSession: true },
+        );
+        if (order.paymentMethod !== "stripe" || order.amount !== offering.amount) {
+          lines.push({ ...line, orderId: order.orderId });
+          throw new AgentCommerceError("This product cannot be bought by an agent.", 409, "checkout_refused");
+        }
+        lines.push({ ...line, orderId: order.orderId });
+      }
+    }
+    session = await createLinesPaymentSession(env, context, provider, {
+      checkoutId,
+      lines,
+      total,
+      currency,
+      buyerName: input.buyerName,
+      buyerEmail: input.buyerEmail,
+      sessionExpiresAtMs: nowMs + PAYMENT_WINDOW_MINUTES * 60_000,
+    });
+  } catch (error) {
+    // Nothing stays reserved for a checkout that never got a payment page.
+    for (const line of lines) {
+      if (line.holdToken) await releaseBookingHold(env, line.holdToken);
+      if (line.orderId) await failPendingProductOrder(env, context.site, line.orderId);
+    }
+    await env.DB.prepare("DELETE FROM agent_commerce_checkouts WHERE id = ? AND status = 'creating'")
+      .bind(checkoutId)
+      .run();
+    throw checkoutFailure(error);
+  }
+
+  await env.DB.prepare(
+    `UPDATE agent_commerce_checkouts
+     SET status = 'pending', provider = ?, provider_session_id = ?, provider_checkout_url = ?,
+         lines_json = ?, updated_at = ?
+     WHERE id = ? AND status = 'creating'`,
+  )
+    .bind(provider.kind, session.id, session.url, JSON.stringify(lines), now, checkoutId)
+    .run();
+  const row = await loadCheckout(env, context.site.id, checkoutId);
+  if (!row) throw new Error("Agent checkout could not be loaded");
+  return { created: true, checkout: await withStatusSecret(env, context, row) };
+}
+
+async function createLinesPaymentSession(
+  env: Env,
+  context: AgentCommerceContext,
+  provider: CheckoutProvider,
+  input: {
+    checkoutId: string;
+    lines: CheckoutLine[];
+    total: number;
+    currency: string;
+    buyerName: string;
+    buyerEmail: string;
+    sessionExpiresAtMs: number;
+  },
+): Promise<{ id: string; url: string | null }> {
+  const { site } = context;
+  // The buyer comes back to this checkout, not to a booking or shop page that
+  // only knows single-item sessions.
+  const returnUrl = `${agentCommerceSiteBase(new URL(context.requestUrl).origin, site.username)}/checkouts/${encodeURIComponent(input.checkoutId)}/return`;
+  const metadata = {
+    purchase_kind: AGENT_CHECKOUT_PURCHASE_KIND,
+    site_id: site.id,
+    checkout_id: input.checkoutId,
+    campaign: AGENT_CHECKOUT_CAMPAIGN,
+  };
+  try {
+    if (provider.stripe) {
+      return await provider.stripe.checkout.sessions.create({
+        mode: "payment",
+        customer_email: input.buyerEmail,
+        line_items: input.lines.map((line) => ({
+          price_data: {
+            currency: input.currency.toLowerCase(),
+            product_data: {
+              name: line.title,
+              ...(line.slotStart && line.durationMinutes
+                ? { description: `${line.slotStart.slice(0, 16).replace("T", " ")} UTC (${line.durationMinutes} minutes)` }
+                : {}),
+            },
+            unit_amount: line.amount,
+          },
+          quantity: 1,
+        })),
+        payment_intent_data: { metadata },
+        metadata,
+        success_url: appendQueryParams(returnUrl, { session_id: "{CHECKOUT_SESSION_ID}" }),
+        cancel_url: returnUrl,
+        expires_at: Math.floor(input.sessionExpiresAtMs / 1000),
+      });
+    }
+    // Managed commerce takes one named amount per session; the lines stay itemised here.
+    const bridge = await getManagedCommerceBridgeConfig(env);
+    if (!bridge) throw new Error("Managed commerce bridge is not configured.");
+    const response = await fetch(`${bridge.origin.replace(/\/+$/, "")}/v1/commerce/checkout-sessions`, {
+      method: "POST",
+      headers: { ...bridge.headers, "Content-Type": "application/json" },
+      body: JSON.stringify({
+        referenceId: input.checkoutId,
+        kind: "booking",
+        siteId: site.id,
+        ownerId: site.user_id,
+        product: {
+          id: "agent-checkout",
+          name: input.lines.map((line) => line.title).join(" + ").slice(0, 200),
+          amount: input.total,
+          currency: input.currency.toLowerCase(),
+        },
+        customer: { name: input.buyerName, email: input.buyerEmail },
+        metadata,
+        returnUrl,
+        expiresAt: new Date(input.sessionExpiresAtMs).toISOString(),
+      }),
+    });
+    const data = (await response.json()) as { url?: string; sessionId?: string; error?: string };
+    if (!response.ok || !data.url || !data.sessionId) {
+      throw new Error(data.error || "Managed checkout is unavailable.");
+    }
+    return { id: data.sessionId, url: data.url };
+  } catch (error) {
+    console.error("Agent checkout payment session failed:", error instanceof Error ? error.message : "Unknown error");
+    throw new AgentCommerceError("Payments are not available for this site right now.", 503, "commerce_unavailable");
+  }
+}
+
+/** Every line settled: the bookings confirmed and the orders paid. */
+async function readLinesSettlement(
+  env: Env,
+  site: DbSite,
+  row: AgentCheckoutRow,
+  lines: CheckoutLine[],
+): Promise<{ lines: CheckoutLine[]; paidAmount: number; paidCurrency: string; paidAt: string } | null> {
+  const settled: CheckoutLine[] = [];
+  let paidAmount = 0;
+  let paidAt = "";
+  let paidCurrency = row.currency;
+  for (const line of lines) {
+    if (line.orderId) {
+      const order = await env.DB.prepare(
+        "SELECT status, amount_paid, currency, paid_at FROM commerce_orders WHERE id = ? AND site_id = ?",
+      )
+        .bind(line.orderId, site.id)
+        .first<{ status: string; amount_paid: number | null; currency: string | null; paid_at: string | null }>();
+      if (order?.status !== "paid" && order?.status !== "refunded") return null;
+      paidAmount += Number(order.amount_paid || 0);
+      paidCurrency = String(order.currency || paidCurrency).toUpperCase();
+      paidAt = [paidAt, sqliteTimeToIso(order.paid_at) || ""].sort().pop()!;
+      settled.push(line);
+      continue;
+    }
+    const booking = await env.DB.prepare(
+      `SELECT b.id, b.amount_paid, b.currency, b.paid_at
+       FROM booking_holds h JOIN bookings b ON b.id = h.booking_id
+       WHERE h.hold_token = ? AND h.site_id = ? AND h.status = 'confirmed'`,
+    )
+      .bind(line.holdToken || "", site.id)
+      .first<{ id: string; amount_paid: number | null; currency: string | null; paid_at: string | null }>();
+    if (!booking) return null;
+    paidAmount += Number(booking.amount_paid || 0);
+    paidCurrency = String(booking.currency || paidCurrency).toUpperCase();
+    paidAt = [paidAt, sqliteTimeToIso(booking.paid_at) || ""].sort().pop()!;
+    settled.push({ ...line, bookingId: booking.id });
+  }
+  return { lines: settled, paidAmount, paidCurrency, paidAt: paidAt || new Date().toISOString() };
+}
+
+/** Verifies the one payment with the provider, then confirms each line with its own share. */
+async function settleLinesWithProvider(
+  env: Env,
+  site: DbSite,
+  row: AgentCheckoutRow,
+  lines: CheckoutLine[],
+): Promise<void> {
+  try {
+    let session: Stripe.Checkout.Session;
+    if (row.provider === "stripe_direct") {
+      const stripe = await getStripe(env, site.user_id);
+      if (!stripe) return;
+      session = await stripe.checkout.sessions.retrieve(row.provider_session_id!);
+    } else {
+      session = await retrieveManagedBookingCheckout(env, row.provider_session_id!);
+    }
+    if (session.payment_status !== "paid") return;
+    const metadata = session.metadata || {};
+    const paymentIntentId = typeof session.payment_intent === "string"
+      ? session.payment_intent
+      : session.payment_intent?.id || null;
+    if (
+      metadata.purchase_kind !== AGENT_CHECKOUT_PURCHASE_KIND ||
+      metadata.checkout_id !== row.id ||
+      metadata.site_id !== site.id ||
+      session.amount_total !== row.amount_minor ||
+      String(session.currency || "").toUpperCase() !== row.currency ||
+      !paymentIntentId
+    ) {
+      console.error("Agent checkout payment does not match its checkout", row.id);
+      return;
+    }
+    // commerce_orders.payment_intent_id is unique, so only the first order carries it.
+    let orderIntent: string | null = paymentIntentId;
+    for (const line of lines) {
+      if (line.orderId) {
+        await finalizeDeferredProductOrder(env, site, line.orderId, {
+          paymentIntentId: orderIntent,
+          amount: line.amount,
+          currency: String(session.currency),
+        });
+        orderIntent = null;
+        continue;
+      }
+      const result = await finalizePaidBookingCheckout(env, site, {
+        id: session.id,
+        object: "checkout.session",
+        payment_status: "paid",
+        payment_intent: paymentIntentId,
+        amount_total: line.amount,
+        amount_subtotal: line.amount,
+        currency: session.currency,
+        metadata: {
+          purchase_kind: "booking",
+          site_id: site.id,
+          offer_id: line.offerId || "",
+          booking_type: "one_to_one",
+          hold_token: line.holdToken || "",
+          guest_name: row.buyer_name,
+          guest_email: row.buyer_email,
+          notes: "",
+          starts_at: line.slotStart || "",
+          ends_at: line.slotEnd || "",
+          duration_minutes: String(line.durationMinutes || 0),
+          page_id: "",
+          action_id: "",
+          campaign: AGENT_CHECKOUT_CAMPAIGN,
+        },
+      } as unknown as Stripe.Checkout.Session);
+      if ("error" in result) console.error("Agent checkout line confirmation failed", row.id, result.error);
+    }
+  } catch (error) {
+    if (error instanceof CommerceOrderInputError && error.status < 500) {
+      console.error("Agent checkout line could not be completed", row.id, error.message);
+      return;
+    }
+    console.error("Agent checkout provider check failed", row.id, error instanceof Error ? error.message : "Unknown error");
+  }
+}
+
+/** A paid checkout with several lines reads as cancelled only when every line was. */
+async function linesAllCancelled(env: Env, site: DbSite, lines: CheckoutLine[]): Promise<boolean> {
+  for (const line of lines) {
+    const status = line.orderId
+      ? (await env.DB.prepare("SELECT status FROM commerce_orders WHERE id = ? AND site_id = ?")
+          .bind(line.orderId, site.id).first<{ status: string }>())?.status
+      : (await env.DB.prepare("SELECT status FROM bookings WHERE id = ? AND site_id = ?")
+          .bind(line.bookingId || "", site.id).first<{ status: string }>())?.status;
+    if (status !== (line.orderId ? "refunded" : "cancelled")) return false;
+  }
+  return true;
+}
+
+/**
+ * Tells the buyer's installation that this checkout settled. The message carries
+ * no secret and proves nothing: the buyer reads the checkout with its status
+ * secret before believing it.
+ */
+async function notifyBuyer(env: Env, row: AgentCheckoutRow, status: "paid" | "cancelled"): Promise<void> {
+  if (!row.notify_url) return;
+  try {
+    const url = publicHttpsUrl(row.notify_url, "notify.url", env);
+    await fetch(url.toString(), {
+      method: "POST",
+      redirect: "manual",
+      signal: AbortSignal.timeout(NOTIFY_TIMEOUT_MS),
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ checkoutId: row.id, status }),
+    });
+  } catch {
+    // The buyer also checks by itself; a missed notice only delays it.
+  }
+}
+
+/**
+ * Settles the agent checkout paid with this payment session and tells its buyer.
+ * Called where the seller first learns of a payment: the site's own return
+ * pages and the Stripe webhook. Never throws.
+ */
+export async function settleAgentCheckoutForSession(env: Env, site: DbSite, sessionId: string): Promise<void> {
+  try {
+    if (!sessionId) return;
+    const row = await env.DB.prepare(
+      "SELECT * FROM agent_commerce_checkouts WHERE site_id = ? AND provider_session_id = ? AND status = 'pending'",
+    )
+      .bind(site.id, sessionId)
+      .first<AgentCheckoutRow>();
+    if (row) await refreshCheckout(env, site, row, { notify: true, paymentSeen: true });
+  } catch (error) {
+    console.error("Agent checkout settlement failed", error instanceof Error ? error.message : "Unknown error");
+  }
+}
+
+/** Where the payment page sends the buyer back to. Settles the checkout and says what happened. */
+export async function returnFromAgentCheckoutPayment(
+  env: Env,
+  site: DbSite,
+  checkoutId: string,
+): Promise<{ title: string; message: string }> {
+  const loaded = await loadCheckout(env, site.id, checkoutId);
+  if (!loaded || loaded.status === "creating") {
+    throw new AgentCommerceError("Checkout not found.", 404, "checkout_not_found");
+  }
+  const row = await refreshCheckout(env, site, loaded, { notify: true });
+  if (row.status === "paid") {
+    return {
+      title: "Payment received",
+      message: "Payment received. Your confirmation is on its way by email. You can close this tab and go back to your assistant.",
+    };
+  }
+  if (row.status === "pending") {
+    return {
+      title: "Not paid yet",
+      message: "This checkout has not been paid. Go back to your assistant to open it again while it is held for you.",
+    };
+  }
+  return {
+    title: "Checkout closed",
+    message: row.status === "cancelled"
+      ? "This purchase was cancelled by the seller."
+      : "This checkout has expired and nothing was bought. Ask your assistant to start a new one.",
+  };
+}
+
 export async function getAgentCheckout(
   env: Env,
   context: Pick<AgentCommerceContext, "site" | "requestUrl">,
@@ -997,7 +1570,8 @@ export async function getAgentCheckout(
       !constantTimeEqual(statusSecret, await checkoutStatusSecret(env, row.id))) {
     throw new AgentCommerceError("Checkout not found.", 404, "checkout_not_found");
   }
-  return checkoutView(await refreshCheckout(env, context.site, row), context);
+  // The answer to this read is the buyer's notice.
+  return checkoutView(await refreshCheckout(env, context.site, row, { notify: false }), context);
 }
 
 /**
@@ -1014,7 +1588,7 @@ export async function openAgentCheckoutPayment(
   if (!loaded || loaded.status === "creating") {
     throw new AgentCommerceError("Checkout not found.", 404, "checkout_not_found");
   }
-  const row = await refreshCheckout(env, site, loaded);
+  const row = await refreshCheckout(env, site, loaded, { notify: true });
   if (row.status === "paid") throw new AgentCommerceError("This checkout is already paid.", 409, "checkout_paid");
   if (row.status !== "pending" || !row.provider_checkout_url) {
     throw new AgentCommerceError(
@@ -1028,14 +1602,16 @@ export async function openAgentCheckoutPayment(
   const nowMs = Date.now();
   const windowEnd = new Date(Date.parse(row.created_at) + PAYMENT_WINDOW_MINUTES * 60_000).toISOString();
   const holdEnd = new Date(Date.parse(windowEnd) + CONFIRMATION_GRACE_MINUTES * 60_000).toISOString();
-  if (row.hold_token) {
+  for (const holdToken of checkoutHoldTokens(row)) {
     const extended = await env.DB.prepare(
       `UPDATE booking_holds SET expires_at = ?, updated_at = datetime('now')
        WHERE hold_token = ? AND status = 'active' AND datetime(expires_at) > datetime('now')`,
     )
-      .bind(holdEnd, row.hold_token)
+      .bind(holdEnd, holdToken)
       .run();
     if (!Number(extended.meta.changes || 0)) {
+      await releaseCheckoutHolds(env, row);
+      await failReservedOrders(env, site, row);
       await markCheckout(env, row, { status: "expired" });
       throw new AgentCommerceError(
         "This checkout has expired. Ask your assistant to start a new one.",
@@ -1070,14 +1646,47 @@ export async function expireStaleAgentCheckouts(env: Env): Promise<void> {
   for (const row of results || []) {
     const site = await env.DB.prepare("SELECT * FROM sites WHERE id = ?").bind(row.site_id).first<DbSite>();
     if (!site) continue;
-    await refreshCheckout(env, site, row).catch((error) =>
+    await refreshCheckout(env, site, row, { notify: true }).catch((error) =>
       console.error("Agent checkout sweep failed", row.id, error instanceof Error ? error.message : "Unknown error"),
     );
   }
   await pruneAgentCommerceRateLimits(env);
 }
 
-async function refreshCheckout(env: Env, site: DbSite, row: AgentCheckoutRow): Promise<AgentCheckoutRow> {
+function checkoutHoldTokens(row: AgentCheckoutRow): string[] {
+  const lines = parseLines(row);
+  if (lines) return lines.flatMap((line) => (line.holdToken ? [line.holdToken] : []));
+  return row.hold_token ? [row.hold_token] : [];
+}
+
+/** Frees the slots of a checkout that can no longer be paid. */
+async function releaseCheckoutHolds(env: Env, row: AgentCheckoutRow): Promise<void> {
+  for (const holdToken of checkoutHoldTokens(row)) await releaseBookingHold(env, holdToken);
+}
+
+/** Orders reserved for a checkout with several lines have no session of their own to expire them. */
+async function failReservedOrders(env: Env, site: DbSite, row: AgentCheckoutRow): Promise<void> {
+  for (const line of parseLines(row) || []) {
+    if (line.orderId) await failPendingProductOrder(env, site, line.orderId);
+  }
+}
+
+/**
+ * `notify` tells the buyer when this call is what settles the checkout.
+ * `paymentSeen` is set where the seller has just seen the payment itself.
+ */
+async function refreshCheckout(
+  env: Env,
+  site: DbSite,
+  row: AgentCheckoutRow,
+  options: { notify: boolean; paymentSeen?: boolean },
+): Promise<AgentCheckoutRow> {
+  const lines = parseLines(row);
+  if (row.status === "paid" && lines) {
+    return (await linesAllCancelled(env, site, lines))
+      ? markCheckout(env, row, { status: "cancelled" }, options.notify)
+      : row;
+  }
   if (row.status === "paid") {
     const cancelled = row.booking_id
       ? (await env.DB.prepare("SELECT status FROM bookings WHERE id = ? AND site_id = ?")
@@ -1086,29 +1695,43 @@ async function refreshCheckout(env: Env, site: DbSite, row: AgentCheckoutRow): P
         ? (await env.DB.prepare("SELECT status FROM commerce_orders WHERE id = ? AND site_id = ?")
             .bind(row.order_id, site.id).first<{ status: string }>())?.status === "refunded"
         : false;
-    return cancelled ? markCheckout(env, row, { status: "cancelled" }) : row;
+    return cancelled ? markCheckout(env, row, { status: "cancelled" }, options.notify) : row;
   }
   if (row.status !== "pending") return row;
 
-  let settled = await readSettlement(env, site, row);
   // Nobody can pay a checkout whose payment link was never opened.
-  if (!settled && row.opened_at && row.provider_session_id) {
-    await settleWithProvider(env, site, row);
-    settled = await readSettlement(env, site, row);
+  const payable = Boolean((row.opened_at || options.paymentSeen) && row.provider_session_id);
+  if (lines) {
+    let settled = await readLinesSettlement(env, site, row, lines);
+    if (!settled && payable) {
+      await settleLinesWithProvider(env, site, row, lines);
+      settled = await readLinesSettlement(env, site, row, lines);
+    }
+    if (settled) {
+      const { lines: settledLines, ...paid } = settled;
+      return markCheckout(env, row, { status: "paid", ...paid, linesJson: JSON.stringify(settledLines) }, options.notify);
+    }
+  } else {
+    let settled = await readSettlement(env, site, row);
+    if (!settled && payable) {
+      await settleWithProvider(env, site, row);
+      settled = await readSettlement(env, site, row);
+    }
+    if (settled) return markCheckout(env, row, { status: "paid", ...settled }, options.notify);
   }
-  if (settled) return markCheckout(env, row, { status: "paid", ...settled });
 
   // An opened checkout keeps the confirmation grace its hold was given.
   const grace = row.opened_at ? CONFIRMATION_GRACE_MINUTES * 60_000 : 0;
   if (Date.parse(row.expires_at) + grace <= Date.now()) {
-    if (row.hold_token) {
+    for (const holdToken of checkoutHoldTokens(row)) {
       await env.DB.prepare(
         `UPDATE booking_holds SET status = 'expired', updated_at = datetime('now')
          WHERE hold_token = ? AND status = 'active' AND datetime(expires_at) <= datetime('now')`,
       )
-        .bind(row.hold_token)
+        .bind(holdToken)
         .run();
     }
+    await failReservedOrders(env, site, row);
     return markCheckout(env, row, { status: "expired" });
   }
   return row;
@@ -1182,27 +1805,33 @@ async function markCheckout(
   row: AgentCheckoutRow,
   change:
     | { status: "expired" | "cancelled" }
-    | { status: "paid"; bookingId?: string; paidAmount: number; paidCurrency: string; paidAt: string },
+    | { status: "paid"; bookingId?: string; paidAmount: number; paidCurrency: string; paidAt: string; linesJson?: string },
+  notify = false,
 ): Promise<AgentCheckoutRow> {
   const now = new Date().toISOString();
+  let changed: number;
   if (change.status === "paid") {
-    await env.DB.prepare(
+    const result = await env.DB.prepare(
       `UPDATE agent_commerce_checkouts
        SET status = 'paid', booking_id = COALESCE(?, booking_id), paid_amount_minor = ?,
-           paid_currency = ?, paid_at = ?, updated_at = ?
+           paid_currency = ?, paid_at = ?, lines_json = COALESCE(?, lines_json), updated_at = ?
        WHERE id = ? AND status = 'pending'`,
     )
-      .bind(change.bookingId || null, change.paidAmount, change.paidCurrency, change.paidAt, now, row.id)
+      .bind(change.bookingId || null, change.paidAmount, change.paidCurrency, change.paidAt, change.linesJson || null, now, row.id)
       .run();
+    changed = Number(result.meta.changes || 0);
   } else {
     // Expiry only ends a pending checkout; cancellation only follows a paid one.
-    await env.DB.prepare(
+    const result = await env.DB.prepare(
       `UPDATE agent_commerce_checkouts SET status = ?, updated_at = ?
        WHERE id = ? AND status = ?`,
     )
       .bind(change.status, now, row.id, change.status === "expired" ? "pending" : "paid")
       .run();
+    changed = Number(result.meta.changes || 0);
   }
+  // Only the call that made the change tells the buyer, so it hears once.
+  if (notify && changed && change.status !== "expired") await notifyBuyer(env, row, change.status);
   return (await loadCheckout(env, row.site_id, row.id)) || row;
 }
 
@@ -1219,6 +1848,40 @@ function checkoutView(
   context: Pick<AgentCommerceContext, "site" | "requestUrl">,
 ): AgentCheckoutView {
   const base = agentCommerceSiteBase(new URL(context.requestUrl).origin, context.site.username);
+  const lines = parseLines(row)?.map((line): AgentCheckoutLineView => ({
+    offeringId: line.offeringId,
+    kind: line.kind,
+    title: line.title,
+    quantity: 1,
+    slot: line.slotStart && line.slotEnd ? { start: line.slotStart, end: line.slotEnd } : null,
+    amount: line.amount,
+    reference: line.bookingId
+      ? { type: "booking", id: line.bookingId }
+      : line.orderId
+        ? { type: "order", id: line.orderId }
+        : null,
+  }));
+  if (lines) {
+    return {
+      checkoutId: row.id,
+      status: row.status === "creating" ? "pending" : row.status,
+      offeringId: row.offering_id,
+      kind: row.offering_kind,
+      quantity: 1,
+      slot: row.slot_start && row.slot_end ? { start: row.slot_start, end: row.slot_end } : null,
+      amount: row.amount_minor,
+      currency: row.currency,
+      payUrl: row.status === "pending" && row.provider_checkout_url
+        ? `${base}/checkouts/${encodeURIComponent(row.id)}/pay`
+        : null,
+      expiresAt: row.expires_at,
+      reference: lines.find((line) => line.reference)?.reference || null,
+      paidAmount: row.paid_amount_minor,
+      paidCurrency: row.paid_currency,
+      paidAt: row.paid_at,
+      lines,
+    };
+  }
   return {
     checkoutId: row.id,
     status: row.status === "creating" ? "pending" : row.status,

@@ -66,7 +66,7 @@ export interface AgentPaymentServices {
   shopifyCart?(input: { productUrl: unknown; options?: unknown; quantity?: unknown }): Promise<Record<string, unknown>>;
   /** Buying from another ME3 site through its agent commerce API (network commerce). */
   networkCheck?(seller: NetworkSellerRef, input: { offeringId: unknown; from?: unknown; to?: unknown }): Promise<Record<string, unknown>>;
-  proposeNetwork?(input: { seller: NetworkSellerRef | null; offeringId: unknown; slotStart?: unknown; quantity?: unknown; purpose: unknown }, scope: { threadId: string; turnId: string; idempotencyKey: string }): Promise<PaymentProposalRecord>;
+  proposeNetwork?(input: { seller: NetworkSellerRef | null; offeringId?: unknown; slotStart?: unknown; quantity?: unknown; items?: unknown; purpose: unknown }, scope: { threadId: string; turnId: string; idempotencyKey: string }): Promise<PaymentProposalRecord>;
   handOverNetwork?(proposalId: string, proposalHash: string): Promise<{ outcome: string; proposal: PaymentProposalRecord; handOver: { openUrl: string; instructions: string; expiresAt: string | null } | null; next: string; [key: string]: unknown }>;
   refreshNetwork?(proposalId: string): Promise<PaymentProposalRecord>;
 }

@@ -1,3 +1,4 @@
+import { settleAgentCheckoutForSession } from "../agent-commerce";
 import { requestCountry } from "../../../../shared/regional-pricing";
 import Stripe from "stripe";
 import {
@@ -224,6 +225,7 @@ export function registerEventBookingRoutes(app: AppHono) {
         : await retrieveManagedEventCheckout(c.env, sessionId);
       const result = await finalizePaidEventBookingCheckout(c.env, site, session);
       if ("error" in result) return c.json({ error: result.error }, result.status as any);
+      await settleAgentCheckoutForSession(c.env, site, sessionId);
       return c.json(result);
     } catch (error) {
       console.error("Event booking completion failed:", error);

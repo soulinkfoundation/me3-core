@@ -27,6 +27,7 @@ vi.mock("stripe", () => {
           }
           const id = `cs_test_${stripeState.sessions.size + 1}`;
           const line = params.line_items[0];
+          const total = params.line_items.reduce((sum: number, item: any) => sum + item.price_data.unit_amount * item.quantity, 0);
           const session = {
             id,
             object: "checkout.session",
@@ -34,8 +35,8 @@ vi.mock("stripe", () => {
             status: "open",
             payment_status: "unpaid",
             payment_intent: null,
-            amount_total: line.price_data.unit_amount * line.quantity,
-            amount_subtotal: line.price_data.unit_amount * line.quantity,
+            amount_total: total,
+            amount_subtotal: total,
             currency: line.price_data.currency,
             metadata: params.metadata,
             expires_at: params.expires_at,
@@ -633,6 +634,170 @@ describe("agent checkouts", () => {
       expect((await createCheckout(env, overrides)).body.code).toBe("invalid_request");
     }
     expect((await createCheckout(env, { quantity: 2, expectedAmount: 12000 })).body.code).toBe("invalid_quantity");
+  });
+});
+
+// Failure modes for several lines in one checkout: two payments for one purchase, a
+// hold left behind when a later line fails, one line confirmed without the other, a
+// changed total slipping through, and a notify URL that leaks a secret or fakes a payment.
+describe("agent checkouts with several lines", () => {
+  const linesBody = (overrides: Json = {}) => checkoutBody({
+    offeringId: undefined,
+    slot: undefined,
+    lines: [
+      { offeringId: "service:coaching", slot: { start: dublinInstant(TARGET_DATE, "10:00") } },
+      { offeringId: "product:clarity-kit" },
+    ],
+    expectedAmount: 10900,
+    ...overrides,
+  });
+  const createLines = (env: Env, overrides: Json = {}) =>
+    call(env, "/checkouts", { method: "POST", body: JSON.stringify(linesBody(overrides)) });
+
+  it("says how many lines one checkout takes", async () => {
+    const { env } = fixture();
+    const { body } = await call(env, "/offerings");
+    expect(body.checkout).toEqual({ maxLines: 5, lineKinds: ["booking", "product"], notify: true });
+  });
+
+  it("holds a booking and a product in one Stripe session and settles both from one payment", async () => {
+    const { env, raw } = fixture();
+    const { status, body } = await createLines(env);
+    expect(status).toBe(201);
+    expect(body).toMatchObject({ status: "pending", amount: 10900, currency: "EUR" });
+    expect(body.lines).toMatchObject([
+      { offeringId: "service:coaching", kind: "booking", title: "Coaching session", amount: 6000, slot: { start: dublinInstant(TARGET_DATE, "10:00") } },
+      { offeringId: "product:clarity-kit", kind: "product", title: "Clarity Kit", amount: 4900, slot: null, reference: { type: "order" } },
+    ]);
+    // One session with both lines; nothing in the answer names the hold.
+    expect(stripeState.created).toHaveLength(1);
+    expect(stripeState.created[0].line_items.map((item: Json) => [item.price_data.product_data.name, item.price_data.unit_amount]))
+      .toEqual([["Coaching session", 6000], ["Clarity Kit", 4900]]);
+    expect(JSON.stringify(body)).not.toContain("holdToken");
+    expect(raw.prepare("SELECT status FROM booking_holds").all()).toEqual([{ status: "active" }]);
+    expect(raw.prepare("SELECT status, amount_due, checkout_session_id FROM commerce_orders").all())
+      .toEqual([{ status: "pending", amount_due: 4900, checkout_session_id: null }]);
+
+    // A retry returns the same checkout and makes no second session.
+    const retry = await createLines(env);
+    expect(retry.status).toBe(200);
+    expect(retry.body.checkoutId).toBe(body.checkoutId);
+    expect(stripeState.created).toHaveLength(1);
+
+    const pay = await app.fetch(new Request(body.payUrl), env);
+    expect(pay.status).toBe(303);
+    const [sessionId] = [...stripeState.sessions.keys()];
+    paySession(sessionId, "pi_basket");
+    const paid = await call(env, `/checkouts/${body.checkoutId}`, { headers: { Authorization: `Bearer ${body.statusSecret}` } });
+    expect(paid.body).toMatchObject({ status: "paid", paidAmount: 10900, paidCurrency: "EUR", payUrl: null });
+    expect(paid.body.lines.map((line: Json) => line.reference?.type)).toEqual(["booking", "order"]);
+    expect(raw.prepare("SELECT status, amount_paid, payment_intent_id, campaign FROM bookings").all())
+      .toEqual([{ status: "confirmed", amount_paid: 6000, payment_intent_id: "pi_basket", campaign: "agent-commerce" }]);
+    expect(raw.prepare("SELECT status, amount_paid FROM commerce_orders").all()).toEqual([{ status: "paid", amount_paid: 4900 }]);
+    expect(raw.prepare("SELECT status FROM booking_holds").all()).toEqual([{ status: "confirmed" }]);
+
+    // Accounts keeps both sales although one payment covered them.
+    const { syncWebsiteIncomeEntries } = await import("./accounts");
+    await syncWebsiteIncomeEntries(env, "owner");
+    await syncWebsiteIncomeEntries(env, "owner");
+    expect(raw.prepare("SELECT amount_cents FROM financial_entries ORDER BY amount_cents").all()).toEqual([{ amount_cents: 4900 }, { amount_cents: 6000 }]);
+
+    // Reading again changes nothing: one booking, one order.
+    await call(env, `/checkouts/${body.checkoutId}`, { headers: { Authorization: `Bearer ${body.statusSecret}` } });
+    expect(raw.prepare("SELECT COUNT(*) AS n FROM bookings").get()).toEqual({ n: 1 });
+  });
+
+  it("releases what it reserved when a later line cannot be held", async () => {
+    const { env, raw, setProfile } = fixture();
+    const profile = sellerProfile();
+    (profile.products as Json[])[0].stock = 1;
+    (profile.products as Json[])[0].stockSetAt = "2026-01-01T00:00:00.000Z";
+    setProfile(profile);
+    raw.prepare(
+      `INSERT INTO commerce_orders (id, site_id, product_slug, product_title, buyer_name, buyer_email, amount_due, amount_paid, currency, status, provider, payment_method)
+       VALUES ('sold', 'site-1', 'clarity-kit', 'Clarity Kit', 'Ann', 'ann@example.com', 4900, 4900, 'eur', 'paid', 'stripe_direct', 'stripe')`,
+    ).run();
+    const refused = await createLines(env);
+    expect(refused.status).toBe(409);
+    expect(raw.prepare("SELECT COUNT(*) AS n FROM booking_holds WHERE status = 'active'").get()).toEqual({ n: 0 });
+    expect(stripeState.created).toHaveLength(0);
+    expect(raw.prepare("SELECT COUNT(*) AS n FROM agent_commerce_checkouts").get()).toEqual({ n: 0 });
+  });
+
+  it("refuses a changed total and names the live one", async () => {
+    const { env, raw } = fixture();
+    const { status, body } = await createLines(env, { expectedAmount: 10000 });
+    expect(status).toBe(409);
+    expect(body).toMatchObject({ code: "price_changed", amount: 10900, currency: "EUR" });
+    expect(raw.prepare("SELECT COUNT(*) AS n FROM booking_holds").get()).toEqual({ n: 0 });
+  });
+
+  it("takes classes, retreats and free offerings only on their own", async () => {
+    const { env } = fixture();
+    for (const offeringId of ["service:yoga", "service:intro-call"]) {
+      const { status, body } = await createLines(env, {
+        lines: [{ offeringId, slot: { start: dublinInstant(TARGET_DATE, offeringId === "service:yoga" ? "07:00" : "09:00") } }, { offeringId: "product:clarity-kit" }],
+        expectedAmount: 6100,
+      });
+      expect(status).toBe(400);
+      expect(body.code).toBe("line_not_supported");
+    }
+    expect((await createLines(env, { lines: [] })).status).toBe(400);
+    expect((await createLines(env, { offeringId: "service:coaching" })).body.code).toBe("invalid_request");
+    expect(stripeState.created).toHaveLength(0);
+  });
+
+  it("frees every line when nobody pays inside the hold", async () => {
+    const { env, raw } = fixture();
+    const { body } = await createLines(env);
+    raw.prepare("UPDATE agent_commerce_checkouts SET expires_at = ?").run(new Date(Date.now() - 1000).toISOString());
+    raw.prepare("UPDATE booking_holds SET expires_at = ?").run(new Date(Date.now() - 1000).toISOString());
+    const read = await call(env, `/checkouts/${body.checkoutId}`, { headers: { Authorization: `Bearer ${body.statusSecret}` } });
+    expect(read.body.status).toBe("expired");
+    expect(raw.prepare("SELECT status FROM booking_holds").all()).toEqual([{ status: "expired" }]);
+    expect((await app.fetch(new Request(body.payUrl), env)).status).toBe(410);
+  });
+
+  it("tells the buyer's notify URL once when the payment page returns, with no secret in it", async () => {
+    const { env } = fixture();
+    const nudges: Array<{ url: string; body: string }> = [];
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL, init: RequestInit = {}) => {
+      nudges.push({ url: String(input), body: String(init.body || "") });
+      return new Response(null, { status: 204 });
+    });
+    const notifyUrl = "https://buyer.example/api/network-purchases/p1/notify/tok";
+    const { body } = await createLines(env, { notify: { url: notifyUrl } });
+    await app.fetch(new Request(body.payUrl), env);
+    const returnUrl = stripeState.created[0].success_url as string;
+    expect(returnUrl).toContain(`/checkouts/${body.checkoutId}/return`);
+
+    // Coming back without paying tells nobody.
+    expect(await (await app.fetch(new Request(returnUrl), env)).text()).toContain("not been paid");
+    expect(nudges).toHaveLength(0);
+
+    paySession([...stripeState.sessions.keys()][0]);
+    const page = await app.fetch(new Request(returnUrl), env);
+    expect(page.status).toBe(200);
+    expect(await page.text()).toContain("Payment received");
+    await app.fetch(new Request(returnUrl), env);
+    expect(nudges).toEqual([{ url: notifyUrl, body: JSON.stringify({ checkoutId: body.checkoutId, status: "paid" }) }]);
+    expect(nudges[0].body).not.toContain(body.statusSecret);
+
+    // The buyer's own status read is the answer; it is not nudged as well.
+    const single = await createCheckout(env, { slot: { start: dublinInstant(TARGET_DATE, "11:00") }, idempotencyKey: "approval-0042", notify: { url: notifyUrl } });
+    await app.fetch(new Request(single.body.payUrl), env);
+    paySession([...stripeState.sessions.keys()][1]);
+    await call(env, `/checkouts/${single.body.checkoutId}`, { headers: { Authorization: `Bearer ${single.body.statusSecret}` } });
+    expect(nudges).toHaveLength(1);
+  });
+
+  it("refuses a notify URL that is not public https", async () => {
+    const { env } = fixture();
+    for (const url of ["http://buyer.example/x", "https://127.0.0.1/x", "https://localhost/x"]) {
+      const { status, body } = await createLines(env, { notify: { url } });
+      expect(status).toBe(400);
+      expect(body.code).toBe("invalid_request");
+    }
   });
 });
 

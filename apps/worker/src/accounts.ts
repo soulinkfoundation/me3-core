@@ -1020,6 +1020,7 @@ export async function syncWebsiteIncomeEntries(env: Env, userId: string) {
   const removedPaymentIntents = new Set((removalsResult.results || []).flatMap((row) => row.payment_intent_id ? [row.payment_intent_id] : []));
 
   const statements: D1PreparedStatement[] = [];
+  const claimedByIntent = new Set<string>();
   for (const source of sources) {
     const currency = parseCurrency(source.currency);
     const customerEmail = normalizeCustomerEmail(source.customer_email);
@@ -1027,7 +1028,11 @@ export async function syncWebsiteIncomeEntries(env: Env, userId: string) {
     const refunded = Math.min(gross, Math.max(0, Number(source.refunded_amount_cents) || 0));
     if (!currency || !customerEmail || !Number.isSafeInteger(gross) || gross <= 0) continue;
     const sourceRef = `website:${source.source_kind}:${source.source_id}`;
-    const existing = bySourceRef.get(sourceRef) || (source.payment_intent_id ? byPaymentIntent.get(source.payment_intent_id) : undefined);
+    // A row found by payment intent stands for one sale: an agent checkout with several
+    // lines pays a booking and an order with one intent, and each keeps its own row.
+    const byIntent = source.payment_intent_id ? byPaymentIntent.get(source.payment_intent_id) : undefined;
+    const existing = bySourceRef.get(sourceRef) || (byIntent && !byIntent.source_ref?.startsWith("website:") && !claimedByIntent.has(byIntent.id) ? byIntent : undefined);
+    if (existing && existing === byIntent) claimedByIntent.add(existing.id);
     if (!existing && (removedRefs.has(sourceRef) || (source.payment_intent_id && removedPaymentIntents.has(source.payment_intent_id)))) continue;
     const next: WebsiteIncomeEntryRow = {
       id: existing?.id || crypto.randomUUID(),
@@ -1071,7 +1076,6 @@ export async function syncWebsiteIncomeEntries(env: Env, userId: string) {
         next.refunded_amount_cents, next.currency, next.status, sourceRef, next.customer_name,
         next.customer_email, next.payment_intent_id, next.site_id, next.item_ref, next.item_title,
       ));
-    // A later order or booking paid with the same intent updates this row rather than adding another.
     remember(next);
   }
   for (let index = 0; index < statements.length; index += WEBSITE_INCOME_BATCH_SIZE) {

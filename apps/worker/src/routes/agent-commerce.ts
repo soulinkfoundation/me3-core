@@ -1,5 +1,7 @@
 import { requestCountry } from "../../../../shared/regional-pricing";
 import {
+  AGENT_CHECKOUT_LINE_KINDS,
+  AGENT_CHECKOUT_MAX_LINES,
   AGENT_COMMERCE_BASE_PATH,
   AgentCommerceError,
   agentCommerceSiteBase,
@@ -11,6 +13,7 @@ import {
   identifyAgentCommerceCaller,
   listAgentCommerceOfferings,
   openAgentCheckoutPayment,
+  returnFromAgentCheckoutPayment,
   type AgentCommerceCaller,
   AGENT_COMMERCE_RATE_LIMITS,
 } from "../agent-commerce";
@@ -38,6 +41,8 @@ export function registerAgentCommerceRoutes(app: AppHono) {
       await assertAgentCheckoutOpen(c.env, site);
       return c.json({
         offerings: await listAgentCommerceOfferings(c.env, { site, country: requestCountry(c.req.raw) }),
+        // What POST /checkouts takes beyond a single offering.
+        checkout: { maxLines: AGENT_CHECKOUT_MAX_LINES, lineKinds: AGENT_CHECKOUT_LINE_KINDS, notify: true },
       });
     }),
   );
@@ -86,7 +91,20 @@ export function registerAgentCommerceRoutes(app: AppHono) {
       return c.redirect(await openAgentCheckoutPayment(c.env, site, c.req.param("checkoutId")), 303);
     } catch (error) {
       if (!(error instanceof AgentCommerceError)) throw error;
-      return c.html(paymentPage(error.message), error.status);
+      return c.html(paymentPage("Checkout unavailable", error.message), error.status);
+    }
+  });
+
+  // Where the payment page sends the buyer back: settles the checkout and tells the buyer's ME3.
+  app.get(`${base}/checkouts/:checkoutId/return`, async (c) => {
+    try {
+      const site = await publishedSite(c);
+      await enforceAgentCommerceRateLimit(c.env, "read", await identifyAgentCommerceCaller(c.env, c.req.raw));
+      const page = await returnFromAgentCheckoutPayment(c.env, site, c.req.param("checkoutId"));
+      return c.html(paymentPage(page.title, page.message));
+    } catch (error) {
+      if (!(error instanceof AgentCommerceError)) throw error;
+      return c.html(paymentPage("Checkout unavailable", error.message), error.status);
     }
   });
 }
@@ -114,7 +132,7 @@ async function publishedSite(c: AppContext): Promise<DbSite> {
   return site;
 }
 
-function paymentPage(message: string): string {
+function paymentPage(title: string, message: string): string {
   const escaped = message.replace(/[&<>"']/g, (char) => `&#${char.charCodeAt(0)};`);
-  return `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Checkout</title><style>body{font-family:system-ui,sans-serif;max-width:32rem;margin:15vh auto;padding:0 1.5rem;line-height:1.5;color:#1f2933}</style></head><body><h1>Checkout unavailable</h1><p>${escaped}</p></body></html>`;
+  return `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Checkout</title><style>body{font-family:system-ui,sans-serif;max-width:32rem;margin:15vh auto;padding:0 1.5rem;line-height:1.5;color:#1f2933}</style></head><body><h1>${title}</h1><p>${escaped}</p></body></html>`;
 }

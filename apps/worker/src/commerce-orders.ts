@@ -72,6 +72,11 @@ export type ProductCheckoutOptions = {
   sessionExpiresAtSeconds?: number;
   /** Sent to managed commerce only when set. */
   managedSessionExpiresAt?: string;
+  /**
+   * Reserve the order (and its copy) without a payment session: an agent checkout
+   * with several lines pays for it in one session of its own.
+   */
+  deferSession?: boolean;
 };
 
 export class CommerceOrderInputError extends Error {
@@ -100,6 +105,10 @@ export async function createProductCheckout(
   message?: string;
   /** A pay-directly order's pay page, as a path on the host that served the site. */
   payUrl?: string;
+  /** With `deferSession`: what the caller's own payment session must charge. */
+  amount?: number;
+  currency?: string;
+  title?: string;
 }> {
   const buyerName = normalizeShortText(body.buyerName, 120);
   const buyerEmail = normalizeEmail(body.buyerEmail);
@@ -281,6 +290,9 @@ export async function createProductCheckout(
 
   await env.DB.prepare("UPDATE commerce_orders SET delivery_json = ? WHERE id = ?").bind(deliverySnapshot, orderId).run();
   await holdStock(env, site, sourceProduct, option, orderId, counted);
+  if (options.deferSession) {
+    return { paymentMethod, orderId, amount, currency, title: product.title || product.slug || "ME3 offer" };
+  }
   // Counted products keep checkout short, so an abandoned one frees its copy quickly.
   const holdUntilSeconds = counted ? Math.floor(Date.now() / 1000) + 31 * 60 : undefined;
   const returnUrl = normalizeSiteCheckoutReturnUrl(
@@ -400,6 +412,32 @@ export async function finalizeStripeProductCheckout(
   });
 }
 
+/** Gives up an order reserved with `deferSession` whose payment session never started. */
+export async function failPendingProductOrder(env: Env, site: DbSite, orderId: string): Promise<void> {
+  await env.DB.prepare(
+    `UPDATE commerce_orders SET status = 'failed', updated_at = datetime('now')
+     WHERE id = ? AND site_id = ? AND status = 'pending' AND checkout_session_id IS NULL`,
+  )
+    .bind(orderId, site.id)
+    .run();
+}
+
+/**
+ * Marks an order paid from a payment session that covers several lines. The
+ * caller has verified the session with the provider; `amount` is this order's
+ * share, which must equal what the order was reserved for.
+ */
+export async function finalizeDeferredProductOrder(
+  env: Env,
+  site: DbSite,
+  orderId: string,
+  payment: { paymentIntentId: string | null; amount: number; currency: string },
+) {
+  const order = await getOrderById(env, site.id, orderId);
+  if (!order) throw new CommerceOrderInputError("Checkout order not found.", 404);
+  return finalizeProductOrder(env, site, order, { ...payment, paid: true, orderId: order.id, siteId: site.id });
+}
+
 async function finalizeProductOrder(
   env: Env,
   site: DbSite,
@@ -438,7 +476,10 @@ async function finalizeProductOrder(
       site.id,
     )
     .run();
-  const updated = await getOrderBySession(env, site.id, order.checkout_session_id || "");
+  // An order reserved for an agent checkout with several lines has no session of its own.
+  const updated = order.checkout_session_id
+    ? await getOrderBySession(env, site.id, order.checkout_session_id)
+    : await getOrderById(env, site.id, order.id);
   if (!updated) throw new Error("Paid order could not be loaded");
   if (updated.status !== "paid") throw new CommerceOrderInputError("Order cannot be completed in its current state.", 409);
   await sendProductConfirmation(env, site, updated);
@@ -487,6 +528,11 @@ async function findProduct(
   );
 }
 
+const ORDER_COLUMNS = `id, site_id, page_id, action_id, campaign, product_slug, product_title,
+              buyer_name, buyer_email, buyer_note, amount_paid, amount_due, currency, status,
+              provider, payment_method, checkout_session_id, payment_intent_id, paid_at,
+              created_at, updated_at, confirmation_sent_at, payment_checked_at, delivery_json, fulfilled_at`;
+
 async function getOrderBySession(
   env: Env,
   siteId: string,
@@ -494,13 +540,17 @@ async function getOrderBySession(
 ): Promise<DbCommerceOrder | null> {
   return (
     (await env.DB.prepare(
-      `SELECT id, site_id, page_id, action_id, campaign, product_slug, product_title,
-              buyer_name, buyer_email, buyer_note, amount_paid, amount_due, currency, status,
-              provider, payment_method, checkout_session_id, payment_intent_id, paid_at,
-              created_at, updated_at, confirmation_sent_at, payment_checked_at, delivery_json, fulfilled_at
-       FROM commerce_orders WHERE site_id = ? AND checkout_session_id = ?`,
+      `SELECT ${ORDER_COLUMNS} FROM commerce_orders WHERE site_id = ? AND checkout_session_id = ?`,
     )
       .bind(siteId, sessionId)
+      .first<DbCommerceOrder>()) || null
+  );
+}
+
+async function getOrderById(env: Env, siteId: string, orderId: string): Promise<DbCommerceOrder | null> {
+  return (
+    (await env.DB.prepare(`SELECT ${ORDER_COLUMNS} FROM commerce_orders WHERE site_id = ? AND id = ?`)
+      .bind(siteId, orderId)
       .first<DbCommerceOrder>()) || null
   );
 }

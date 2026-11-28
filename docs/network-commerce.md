@@ -5,7 +5,9 @@ Status: **approved by the owner on 2026-10-17** (bead `me3-2gdu.11`), including
 when commerce is enabled). Spans ME3 Core, ME3 Cloud and ME3 Protocol. Durable
 parts move into the shared docs; build work is in beads. Step 1, the Core seller
 API, is built (`me3-2gdu.13`); see "Seller agent commerce API (Core)". Step 3,
-the Core buyer, is built (`me3-2gdu.15`); see "Buyer flow (Core agent)".
+the Core buyer, is built (`me3-2gdu.15`); see "Buyer flow (Core agent)". One
+checkout for several items and the seller's paid notice are built (`me3-s3wi`);
+see "Several items and the paid notice".
 
 ## Goal
 
@@ -203,6 +205,45 @@ directly for the seller's connected account (Stripe PaymentSheet), so approve
 and pay become a single Face ID. This needs the native approval proof from
 `me3-2gdu.10` and Stripe's support for presenting a connected account's payment
 from the buyer's app.
+
+## Several items and the paid notice
+
+As built (`me3-s3wi`). Both are additive to v1: a seller that does not advertise
+them is used exactly as before.
+
+- **One checkout, one payment.** `POST /checkouts` takes `lines`
+  (`[{offeringId, slot?}]`, up to 5) instead of `offeringId`. Each booking line
+  gets its own 15-minute hold and each product line a reserved order, then one
+  payment session is created for the total: itemised on the seller's own Stripe,
+  one named amount through managed commerce. `expectedAmount` is the sum.
+  Anything that cannot be reserved releases the rest and refuses the checkout.
+- **What can share a checkout.** Paid one-to-one bookings and products in one
+  currency. Classes, retreats and free offerings answer `400
+  line_not_supported` and keep their own checkout. `GET /offerings` says so in
+  `checkout: { maxLines, lineKinds, notify }`.
+- **Settlement.** The seller verifies the one payment (checkout id, site, total
+  and currency), then confirms each line with its own share through the same
+  booking and order code as a single purchase, so emails, reminders, the calendar
+  and Accounts each see a normal booking and a normal order. The checkout is
+  `paid` only when every line is; `lines` in the answer carries each reference.
+  The payment page returns to `/checkouts/{id}/return` on the seller's API, which
+  settles and shows a short "Payment received" page.
+- **Paid notice.** The buyer sends `notify: { url }`, an address on its own
+  installation ending in a token derived from its install key. The seller POSTs
+  `{checkoutId, status}` there when a checkout turns `paid` or `cancelled`: on
+  its payment return pages, its Stripe webhook and its sweep. A settlement the
+  buyer's own status read discovers is not notified again. The notice has no
+  secret and no authority: the buyer answers by reading `GET /checkouts/:id`
+  with its status secret, so a forged or replayed notice records nothing. Notify
+  addresses must be public https; the seller does not follow redirects and
+  waits at most 4 seconds.
+- **Buyer.** `core_payments_propose_network` takes `items` for several offerings
+  from one seller: one immutable proposal (every line is in the hash), one
+  approval, one hand-over, one receipt for the total, and a calendar entry per
+  booked line. If the seller cannot take the items together, the tool says which
+  to propose on its own.
+- **Not yet.** A checkout with several lines reads `cancelled` only when every
+  line was cancelled or refunded; a partly cancelled one stays `paid`.
 
 ## Index changes (ME3 Cloud)
 

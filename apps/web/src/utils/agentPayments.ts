@@ -19,6 +19,8 @@ export type PaymentNetwork = {
   seller: { name: string; handle: string | null; profileId: string | null };
   offering: { id: string; kind: string; title: string };
   slot: { start: string; end: string | null; timezone: string | null } | null;
+  /** Every line; more than one when a single checkout covers several offerings from the seller. */
+  lines?: Array<{ offering: { id: string; kind: string; title: string }; slot: { start: string; end: string | null; timezone: string | null } | null; quantity: number }>;
   quantity: number; sharesWith: { name: string; email: string };
   checkoutStatus: "not_started" | "pending" | "paid" | "expired" | "cancelled" | "price_changed" | "unavailable" | "agent_checkout_off" | string;
   payUrl: string | null; expiresAt: string | null; livePrice: { amount: string; currency: string } | null;

@@ -36,7 +36,7 @@ import type { AppContext, AppHono, OwnerRouteDeps } from "../http/types";
 import type { DbSite, Env } from "../types";
 import { requestCountry } from "../../../../shared/regional-pricing";
 import { parseMe3Json, type Me3Profile } from "me3-protocol";
-import { applyAgentCheckoutSetting } from "../agent-commerce";
+import { applyAgentCheckoutSetting, settleAgentCheckoutForSession } from "../agent-commerce";
 import { syncPublishedProfileToSoulinkDirectory } from "../network-directory";
 import { getPublishedSiteBaseUrl, getSiteFileText, getSiteForOwner, isMissingSiteFilesTableError } from "../sites";
 import { republishForPaymentChange } from "../site-publish";
@@ -277,6 +277,8 @@ export function registerCommerceRoutes(app: AppHono, deps: CommerceRouteDeps) {
     try {
       const result = await completeProductCheckout(c.env, site, sessionId);
       if (!result.ok) return c.json(result);
+      // An agent's checkout: its buyer hears now, not at their next check.
+      await settleAgentCheckoutForSession(c.env, site, sessionId);
       const downloadUrl = await productDownloadLink(c.env, site, result.order).catch(() => null);
       return c.json({ ok: true, order: { status: result.order.status, product_slug: result.order.product_slug }, alreadyCompleted: result.alreadyCompleted, ...(downloadUrl ? { downloadUrl } : {}) });
     } catch (error) {

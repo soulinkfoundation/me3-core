@@ -313,8 +313,12 @@ export async function finalizePaidBookingCheckout(
       : session.payment_intent?.id || null;
   if (!paymentIntentId) return { error: "Stripe payment intent missing from session", status: 400 };
 
-  const existing = await env.DB.prepare(bookingSelectSql("WHERE payment_intent_id = ?"))
-    .bind(paymentIntentId)
+  // One payment can cover several lines of an agent checkout, so a booking is the
+  // same one only when its offer and time match as well.
+  const existing = await env.DB.prepare(
+    bookingSelectSql("WHERE payment_intent_id = ? AND offer_id IS ? AND starts_at = ?"),
+  )
+    .bind(paymentIntentId, metadata.offer_id || null, metadata.starts_at || "")
     .first<DbBooking>();
   if (existing) {
     return { ok: true, booking: serializeBooking(existing), alreadyCompleted: true };
